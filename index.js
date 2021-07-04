@@ -34,6 +34,7 @@ app
   })
   .post('/testcool', (req, res) => {
     const { text, user_name, token } = req.body;
+    console.log(`${user_name} ${text} ${token}`);
     if (process.env.SLACK_BOT_TOKEN !== token) {
       res.send('invalid token');
     } else {
