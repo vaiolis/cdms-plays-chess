@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
 const fetch = require('node-fetch');
+const signVerification = require('./signVerification');
 const PORT = process.env.PORT || 5000;
 
 const pool = new Pool({
@@ -33,13 +34,10 @@ app
     }
   })
   .post('/testcool', (req, res) => {
-    const { text, user_name, token } = req.body;
-    console.log(`${user_name} ${text} ${token}`);
-    if (process.env.SLACK_BOT_TOKEN !== token) {
-      res.send('invalid token');
-    } else {
+    signVerification(req, res, () => {
+      const { text, user_name } = req.body;
       res.send(`${user_name} sent ${text}: ${cool()}`);
-    }
+    });
   })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
