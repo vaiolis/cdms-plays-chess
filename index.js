@@ -28,6 +28,10 @@ express()
       res.send('Error ' + err);
     }
   })
+  .post('/testcool', (req, res) => {
+    const { text, user_name } = req;
+    res.send(`${user_name} sent ${text}: ${cool()}`);
+  })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 showTimes = () => {
