@@ -53,16 +53,19 @@ app
 
 playMove = async (req, res, playingAs) => {
   const { text, user_name } = req.body;
-  const headers = {
-    Authorization: 'Bearer ' + getLichessToken(playingAs),
-  };
-  let gameId = '';
 
   try {
+    const [gameId, isNotMyTurn] = await getGameMetadata(playingAs);
+
+    if (isNotMyTurn) {
+      res.send('It is not your turn to play a move!');
+      return;
+    }
+
     const dbClient = await pool.connect();
     const dbResult = await dbClient.query({
-      text: `SELECT * FROM moves WHERE username = $1 ORDER BY move_id DESC LIMIT 1`,
-      values: [user_name],
+      text: `SELECT * FROM moves WHERE username = $1 AND game_id = $2 ORDER BY move_id DESC LIMIT 1`,
+      values: [user_name, gameId],
     });
 
     if (dbResult.rows && dbResult.rows.length) {
@@ -74,37 +77,19 @@ playMove = async (req, res, playingAs) => {
         dbClient.release();
         return;
       }
-    }
 
-    const currentlyPlayingResponse = await fetch(
-      'https://lichess.org/api/account/playing',
-      { headers }
-    );
-    const currentlyPlayingJson = await currentlyPlayingResponse.json();
-    const ongoingGameExists =
-      currentlyPlayingJson &&
-      currentlyPlayingJson.nowPlaying &&
-      currentlyPlayingJson.nowPlaying.length;
-
-    if (ongoingGameExists) {
-      const currentGame = currentlyPlayingJson.nowPlaying[0];
-      console.log('Current game ID: ' + currentGame.gameId);
-      gameId = currentGame.gameId;
-    } else {
-      const createNewGameJson = await createNewGame(getLichessToken(playingAs));
-      console.log('Created new game with ID ' + createNewGameJson.game.id);
-      gameId = createNewGameJson.game.id;
-    }
-
-    if (ongoingGameExists && !currentlyPlayingJson.nowPlaying[0].isMyTurn) {
-      res.send('It is not your turn to play a move!');
-      dbClient.release();
-      return;
+      if (playingAs !== dbResult.rows[0].team) {
+        res.send(
+          `⛔ You are playing for ${dbResult.rows[0].team}, please wait until it is your turn to move`
+        );
+        dbClient.release();
+        return;
+      }
     }
 
     const playMoveResponse = await fetch(
       `https://lichess.org/api/board/game/${gameId}/move/${text}`,
-      { method: 'post', headers }
+      { method: 'post', headers: buildAuthHeader(playingAs) }
     );
 
     if (playMoveResponse.ok) {
@@ -121,13 +106,45 @@ playMove = async (req, res, playingAs) => {
         values: [user_name, text, playingAs, gameId],
       });
     } else {
-      res.send(`Invalid move: *${text}* was not played`);
+      res.send(`🚫 Invalid move: *${text}* was not played`);
     }
 
     dbClient.release();
   } catch (error) {
     console.error(error);
   }
+};
+
+buildAuthHeader = (playingAs) => ({
+  Authorization: 'Bearer ' + getLichessToken(playingAs),
+});
+
+getGameMetadata = async (playingAs) => {
+  const currentlyPlayingResponse = await fetch(
+    'https://lichess.org/api/account/playing',
+    { headers: buildAuthHeader(playingAs) }
+  );
+  const currentlyPlayingJson = await currentlyPlayingResponse.json();
+  const ongoingGameExists =
+    currentlyPlayingJson &&
+    currentlyPlayingJson.nowPlaying &&
+    currentlyPlayingJson.nowPlaying.length;
+  let gameId;
+
+  if (ongoingGameExists) {
+    const currentGame = currentlyPlayingJson.nowPlaying[0];
+    console.log('Current game ID: ' + currentGame.gameId);
+    gameId = currentGame.gameId;
+  } else {
+    const createNewGameJson = await createNewGame(getLichessToken(playingAs));
+    console.log('Created new game with ID ' + createNewGameJson.game.id);
+    gameId = createNewGameJson.game.id;
+  }
+
+  return [
+    gameId,
+    ongoingGameExists && !currentlyPlayingJson.nowPlaying[0].isMyTurn,
+  ];
 };
 
 createNewGame = async (token) => {
