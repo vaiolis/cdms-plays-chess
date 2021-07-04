@@ -72,22 +72,29 @@ playMove = async (req, res, playingAsArg) => {
       const timeSinceLastMove =
         new Date().getTime() - Date.parse(dbResult.rows[0].created_at);
       console.log(`time since last move: ` + timeSinceLastMove);
+
       if (timeSinceLastMove < process.env.MOVE_TIMEOUT) {
-        res.send('🕒 Please wait 1 minute between moves');
+        res.send(`🕒 Please wait ${process.env.MOVE_TIMEOUT} between moves`);
         dbClient.release();
         return;
       }
 
-      if (playingAs !== dbResult.rows[0].team) {
+      if (
+        (playingAs === dbResult.rows[0].team && !isPlayerTurn) ||
+        (playingAs !== dbResult.rows[0].team && isPlayerTurn)
+      ) {
         res.send(
           `⛔ You are playing for ${dbResult.rows[0].team}, please wait until it is your turn to move`
         );
         dbClient.release();
         return;
       }
-    }
 
-    if (ongoingGameExists && !isPlayerTurn) {
+      // Make user play moves associated with their current team
+      playingAs = dbResult.rows[0].team;
+
+    } else if (ongoingGameExists && !isPlayerTurn) {
+      // If user is not on a team, make sure their next move is for the current team-to-play
       playingAs = getOtherPlayer(playingAs);
     }
 
@@ -101,6 +108,7 @@ playMove = async (req, res, playingAsArg) => {
     const moveResult = chess.move(text, { sloppy: true });
     if (moveResult == null) {
       res.send(`🚫 Invalid move: *${text}* was not played`);
+      dbClient.release();
       return;
     }
 
@@ -154,6 +162,8 @@ getGameMetadata = async (playingAs) => {
     { headers: buildAuthHeader(playingAs) }
   );
   const currentlyPlayingJson = await currentlyPlayingResponse.json();
+  console.log(currentlyPlayingJson);
+
   const ongoingGameExists =
     currentlyPlayingJson &&
     currentlyPlayingJson.nowPlaying &&
