@@ -59,17 +59,13 @@ app
     });
   })
   .post('/playLarry', (req, res) => {
-    signVerification(
-      req,
-      res,
-      () => playMove(req, res, process.env.LARRY_LICHESS_TOKEN)
+    signVerification(req, res, () =>
+      playMove(req, res, process.env.LARRY_LICHESS_TOKEN)
     );
   })
   .post('/playCarrie', (req, res) => {
-    signVerification(
-      req,
-      res,
-      () => playMove(req, res, process.env.CARRIE_LICHESS_TOKEN)
+    signVerification(req, res, () =>
+      playMove(req, res, process.env.CARRIE_LICHESS_TOKEN)
     );
   })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
@@ -93,10 +89,11 @@ playMove = async (req, res, token) => {
   try {
     const response = await fetch(
       'https://lichess.org/api/account/playing',
-      headers
+      { headers }
     );
     const resJson = await response.json();
-    if (resJson?.nowPlaying.length) {
+    console.log(resJson);
+    if (resJson && resJson.nowPlaying && resJson.nowPlaying.length) {
       const currentGame = resJson.nowPlaying[0];
       console.log('current game ID: ' + currentGame.gameId);
       result =
