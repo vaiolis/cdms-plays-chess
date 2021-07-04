@@ -75,7 +75,7 @@ playMove = async (req, res, token) => {
       console.log('Current game ID: ' + currentGame.gameId);
       gameId = currentGame.gameId;
     } else {
-      const createNewGameJson = await createNewGame();
+      const createNewGameJson = await createNewGame(token);
       console.log('Created new game with ID ' + createNewGameJson.game.id);
       gameId = createNewGameJson.game.id;
     }
@@ -100,20 +100,32 @@ playMove = async (req, res, token) => {
   res.send(result);
 };
 
-createNewGame = async () => {
+createNewGame = async (token) => {
   const headers = {
-    Authorization: 'Bearer ' + process.env.LARRY_LICHESS_TOKEN,
+    Authorization: 'Bearer ' + token,
   };
 
   const params = new URLSearchParams();
   params.append('color', 'white');
   params.append('rated', false);
-  params.append('acceptByToken', process.env.CARRIE_LICHESS_TOKEN);
+  params.append(
+    'acceptByToken',
+    token === process.env.LARRY_LICHESS_TOKEN
+      ? process.env.CARRIE_LICHESS_TOKEN
+      : process.env.LARRY_LICHESS_TOKEN
+  );
+
+  const opponent =
+    token === process.env.LARRY_LICHESS_TOKEN ? 'Carrie_CRC' : 'Larry_LDM';
 
   try {
     const response = await fetch(
-      'https://lichess.org/api/challenge/Carrie_CRC',
-      { method: 'post', headers, body: params }
+      `https://lichess.org/api/challenge/${opponent}`,
+      {
+        method: 'post',
+        headers,
+        body: params,
+      }
     );
     const responseJson = await response.json();
     return responseJson;
