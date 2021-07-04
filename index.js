@@ -10,7 +10,10 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-express()
+const app = new express();
+
+app
+  .use(express.urlencoded({ extended: true }))
   .use(express.static(path.join(__dirname, 'public')))
   .set('views', path.join(__dirname, 'views'))
   .set('view engine', 'ejs')
