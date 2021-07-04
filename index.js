@@ -74,7 +74,7 @@ playMove = async (req, res, playingAsArg) => {
       console.log(`time since last move: ` + timeSinceLastMove);
 
       if (timeSinceLastMove < process.env.MOVE_TIMEOUT) {
-        res.send(`🕒 Please wait ${process.env.MOVE_TIMEOUT} between moves`);
+        res.send(`🕒 Please wait ${process.env.MOVE_TIMEOUT/1000} seconds between moves`);
         dbClient.release();
         return;
       }
@@ -105,6 +105,8 @@ playMove = async (req, res, playingAsArg) => {
       chess = new Chess();
     }
 
+    console.log(chess.history());
+
     const moveResult = chess.move(text, { sloppy: true });
     if (moveResult == null) {
       res.send(`🚫 Invalid move: *${text}* was not played`);
@@ -112,6 +114,7 @@ playMove = async (req, res, playingAsArg) => {
       return;
     }
 
+    console.log(moveResult);
     const lastMove = getLastMove(chess);
     const uciMove = `${lastMove.from}${lastMove.to}`;
 
@@ -162,7 +165,6 @@ getGameMetadata = async (playingAs) => {
     { headers: buildAuthHeader(playingAs) }
   );
   const currentlyPlayingJson = await currentlyPlayingResponse.json();
-  console.log(currentlyPlayingJson);
 
   const ongoingGameExists =
     currentlyPlayingJson &&
