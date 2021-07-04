@@ -86,10 +86,14 @@ playMove = async (req, res, token) => {
     );
     if (playMoveResponse.ok) {
       result += `Move (${text}) was successfully played`;
-      const result = await client.chat.postMessage({
+      const channelPostResult = await client.chat.postMessage({
         channel: process.env.CHANNEL_ID,
-        text: `${user_name} played ${text}: view ongoing game at https://lichess.org/${gameId}`,
+        text: `${getChessEmoji(
+          'black',
+          'king'
+        )} ${user_name} played (${text})\nView ongoing game at https://lichess.org/${gameId}`,
       });
+      console.log(channelPostResult);
     } else {
       result += `Move (${text}) failed`;
     }
@@ -134,4 +138,38 @@ createNewGame = async (token) => {
   }
 
   return {};
+};
+
+getChessEmoji = (color, piece) => {
+  if (color === 'white') {
+    switch (piece) {
+      case 'king':
+        return '♔';
+      case 'queen':
+        return '♕';
+      case 'rook':
+        return '♖';
+      case 'knight':
+        return '♘';
+      case 'bishop':
+        return '♗';
+      default:
+        return '♙';
+    }
+  } else {
+    switch (piece) {
+      case 'king':
+        return '♚';
+      case 'queen':
+        return '♛';
+      case 'rook':
+        return '♜';
+      case 'knight':
+        return '♞';
+      case 'bishop':
+        return '♝';
+      default:
+        return '♟️';
+    }
+  }
 };
