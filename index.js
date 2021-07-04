@@ -98,6 +98,7 @@ playMove = async (req, res, playingAsArg) => {
       playingAs = getOtherPlayer(playingAs);
     }
 
+    /* TODO store game history, implement database lock
     let chess;
     if (ongoingGameExists && fenString) {
       chess = new Chess(fenString);
@@ -117,9 +118,10 @@ playMove = async (req, res, playingAsArg) => {
     console.log(moveResult);
     const lastMove = getLastMove(chess);
     const uciMove = `${lastMove.from}${lastMove.to}`;
+    */
 
     const playMoveResponse = await fetch(
-      `https://lichess.org/api/board/game/${gameId}/move/${uciMove}`,
+      `https://lichess.org/api/board/game/${gameId}/move/${text}`,
       { method: 'post', headers: buildAuthHeader(playingAs) }
     );
 
@@ -128,8 +130,8 @@ playMove = async (req, res, playingAsArg) => {
       slackClient.chat.postMessage({
         channel: process.env.CHANNEL_ID,
         text: `${getChessEmoji(
-          lastMove.color,
-          lastMove.piece
+          'b',
+          'p'
         )} ${user_name} played *${text}*\n>View ongoing game at https://lichess.org/${gameId}`,
       });
       dbClient.query({
