@@ -6,6 +6,7 @@ const path = require('path');
 const { Pool } = require('pg');
 const fetch = require('node-fetch');
 const signVerification = require('./signVerification');
+const { URLSearchParams } = require('url');
 const PORT = process.env.PORT || 5000;
 
 const pool = new Pool({
@@ -85,28 +86,62 @@ playMove = async (req, res, token) => {
     Authorization: 'Bearer ' + token,
   };
   let result = '';
+  let gameId = '';
 
   try {
-    const response = await fetch(
+    const currentlyPlayingResponse = await fetch(
       'https://lichess.org/api/account/playing',
       { headers }
     );
-    const resJson = await response.json();
-    console.log(resJson);
-    if (resJson && resJson.nowPlaying && resJson.nowPlaying.length) {
-      const currentGame = resJson.nowPlaying[0];
-      console.log('current game ID: ' + currentGame.gameId);
-      result =
-        'Current game ID is ' +
-        currentGame.gameId +
-        ' and the last move played was ' +
-        currentGame.lastMove;
+    const currentlyPlayingJson = await currentlyPlayingResponse.json();
+    if (
+      currentlyPlayingJson &&
+      currentlyPlayingJson.nowPlaying &&
+      currentlyPlayingJson.nowPlaying.length
+    ) {
+      const currentGame = currentlyPlayingJson.nowPlaying[0];
+      console.log('Current game ID: ' + currentGame.gameId);
+      result = 'Current game ID is ' + currentGame.gameId;
+      gameId = currentGame.gameId;
     } else {
-      result = 'Could not find ongoing game';
+      const createNewGameJson = await createNewGame();
+      console.log('Created new game with ID' + createNewGameJson.id);
+      result = 'Created a new game, the ID is ' + createNewGameJson.id;
+      gameId = createNewGameJson.id;
+    }
+
+    const playMoveResponse = await fetch(
+      `https://lichess.org/api/board/game/${gameId}/move/${text}`,
+      { method: 'post', headers }
+    );
+    if (playMoveResponse.ok) {
+      result += `, move ${text} was successfully played`;
+    } else {
+      result += `, move ${text} failed`;
     }
   } catch (error) {
     console.error(error);
   }
 
   res.send(result);
+};
+
+createNewGame = async () => {
+  const headers = {
+    Authorization: 'Bearer ' + process.env.LARRY_LICHESS_TOKEN,
+  };
+
+  const params = new URLSearchParams();
+  params.append('rated', false);
+  params.append('acceptByToken', process.env.CARRIE_LICHESS_TOKEN);
+
+  try {
+    const response = await fetch(
+      'https://lichess.org/api/challenge/Carrie_CRC',
+      { method: 'post', headers, body: params }
+    );
+    return response.json();
+  } catch (error) {
+    console.error(error);
+  }
 };
