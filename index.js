@@ -101,13 +101,11 @@ playMove = async (req, res, token) => {
     ) {
       const currentGame = currentlyPlayingJson.nowPlaying[0];
       console.log('Current game ID: ' + currentGame.gameId);
-      result = 'Current game ID is ' + currentGame.gameId;
       gameId = currentGame.gameId;
     } else {
       const createNewGameJson = await createNewGame();
-      console.log('Created new game with ID' + createNewGameJson.id);
-      result = 'Created a new game, the ID is ' + createNewGameJson.id;
-      gameId = createNewGameJson.id;
+      console.log('Created new game with ID ' + createNewGameJson.game.id);
+      gameId = createNewGameJson.game.id;
     }
 
     const playMoveResponse = await fetch(
@@ -115,9 +113,13 @@ playMove = async (req, res, token) => {
       { method: 'post', headers }
     );
     if (playMoveResponse.ok) {
-      result += `, move ${text} was successfully played`;
+      result += `Move (${text}) was successfully played`;
+      const result = await client.chat.postMessage({
+        channel: process.env.CHANNEL_ID,
+        text: `${user_name} played ${text}: view ongoing game at https://lichess.org/${gameId}`,
+      });
     } else {
-      result += `, move ${text} failed`;
+      result += `Move (${text}) failed`;
     }
   } catch (error) {
     console.error(error);
@@ -132,6 +134,7 @@ createNewGame = async () => {
   };
 
   const params = new URLSearchParams();
+  params.append('color', 'white');
   params.append('rated', false);
   params.append('acceptByToken', process.env.CARRIE_LICHESS_TOKEN);
 
@@ -140,8 +143,12 @@ createNewGame = async () => {
       'https://lichess.org/api/challenge/Carrie_CRC',
       { method: 'post', headers, body: params }
     );
-    return response.json();
+    const responseJson = await response.json();
+    console.log(responseJson);
+    return responseJson;
   } catch (error) {
     console.error(error);
   }
+
+  return {};
 };
