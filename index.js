@@ -66,11 +66,12 @@ playMove = async (req, res, token) => {
       { headers }
     );
     const currentlyPlayingJson = await currentlyPlayingResponse.json();
-    if (
+    const ongoingGameExists =
       currentlyPlayingJson &&
       currentlyPlayingJson.nowPlaying &&
-      currentlyPlayingJson.nowPlaying.length
-    ) {
+      currentlyPlayingJson.nowPlaying.length;
+
+    if (ongoingGameExists) {
       const currentGame = currentlyPlayingJson.nowPlaying[0];
       console.log('Current game ID: ' + currentGame.gameId);
       gameId = currentGame.gameId;
@@ -80,22 +81,26 @@ playMove = async (req, res, token) => {
       gameId = createNewGameJson.game.id;
     }
 
-    const playMoveResponse = await fetch(
-      `https://lichess.org/api/board/game/${gameId}/move/${text}`,
-      { method: 'post', headers }
-    );
-    if (playMoveResponse.ok) {
-      result += `Move (${text}) was successfully played`;
-      const channelPostResult = await client.chat.postMessage({
-        channel: process.env.CHANNEL_ID,
-        text: `${getChessEmoji(
-          'black',
-          'king'
-        )} ${user_name} played (${text})\nView ongoing game at https://lichess.org/${gameId}`,
-      });
-      console.log(channelPostResult);
+    if (ongoingGameExists && !currentlyPlayingJson.nowPlaying[0].isMyTurn) {
+      result = 'It is not your turn to play a move!';
     } else {
-      result += `Move (${text}) failed`;
+      const playMoveResponse = await fetch(
+        `https://lichess.org/api/board/game/${gameId}/move/${text}`,
+        { method: 'post', headers }
+      );
+      if (playMoveResponse.ok) {
+        result += `Move (${text}) was successfully played`;
+        const channelPostResult = await client.chat.postMessage({
+          channel: process.env.CHANNEL_ID,
+          text: `${getChessEmoji(
+            'black',
+            'king'
+          )} ${user_name} played (${text})\nView ongoing game at https://lichess.org/${gameId}`,
+        });
+        console.log(channelPostResult);
+      } else {
+        result += `Move (${text}) failed`;
+      }
     }
   } catch (error) {
     console.error(error);
