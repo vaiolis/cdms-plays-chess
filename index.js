@@ -41,28 +41,21 @@ app
     }
   })
   .post('/playLarry', (req, res) => {
-    signVerification(req, res, () =>
-      playMove(req, res, process.env.LARRY_LICHESS_TOKEN)
-    );
+    signVerification(req, res, () => playMove(req, res, 'larry'));
   })
   .post('/playCarrie', (req, res) => {
-    signVerification(req, res, () =>
-      playMove(req, res, process.env.CARRIE_LICHESS_TOKEN)
-    );
+    signVerification(req, res, () => playMove(req, res, 'carrie'));
   })
   .post('/play', (req, res) => {
-    signVerification(req, res, () =>
-      playMove(req, res)
-    );
+    signVerification(req, res, () => playMove(req, res));
   })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
-playMove = async (req, res, token) => {
+playMove = async (req, res, playingAs) => {
   const { text, user_name } = req.body;
   const headers = {
-    Authorization: 'Bearer ' + token,
+    Authorization: 'Bearer ' + getLichessToken(playingAs),
   };
-  let result = '';
   let gameId = '';
 
   try {
@@ -73,8 +66,13 @@ playMove = async (req, res, token) => {
     });
 
     if (dbResult.rows && dbResult.rows.length) {
-      console.log(dbResult.rows[0]);
-      console.log(`time since last move: ` + ((new Date()).getTime() - Date.parse(dbResult.rows[0].created_at)));
+      const timeSinceLastMove =
+        new Date().getTime() - Date.parse(dbResult.rows[0].created_at);
+      console.log(`time since last move: ` + timeSinceLastMove);
+      if (timeSinceLastMove < process.env.MOVE_TIMEOUT) {
+        res.send('please wait 1 minute between moves');
+        return;
+      }
     }
 
     const currentlyPlayingResponse = await fetch(
@@ -92,37 +90,37 @@ playMove = async (req, res, token) => {
       console.log('Current game ID: ' + currentGame.gameId);
       gameId = currentGame.gameId;
     } else {
-      const createNewGameJson = await createNewGame(token);
+      const createNewGameJson = await createNewGame(getLichessToken(playingAs));
       console.log('Created new game with ID ' + createNewGameJson.game.id);
       gameId = createNewGameJson.game.id;
     }
 
     if (ongoingGameExists && !currentlyPlayingJson.nowPlaying[0].isMyTurn) {
-      result = 'It is not your turn to play a move!';
+      res.send('It is not your turn to play a move!');
+      return;
+    }
+
+    const playMoveResponse = await fetch(
+      `https://lichess.org/api/board/game/${gameId}/move/${text}`,
+      { method: 'post', headers }
+    );
+
+    if (playMoveResponse.ok) {
+      res.send(`*${text}* was successfully played`);
+      const channelPostResult = await client.chat.postMessage({
+        channel: process.env.CHANNEL_ID,
+        text: `${getChessEmoji(
+          'black',
+          'pawn'
+        )} ${user_name} played (${text})\nView ongoing game at https://lichess.org/${gameId}`,
+      });
+      console.log(channelPostResult);
     } else {
-      const playMoveResponse = await fetch(
-        `https://lichess.org/api/board/game/${gameId}/move/${text}`,
-        { method: 'post', headers }
-      );
-      if (playMoveResponse.ok) {
-        result += `Move (${text}) was successfully played`;
-        const channelPostResult = await client.chat.postMessage({
-          channel: process.env.CHANNEL_ID,
-          text: `${getChessEmoji(
-            'black',
-            'king'
-          )} ${user_name} played (${text})\nView ongoing game at https://lichess.org/${gameId}`,
-        });
-        console.log(channelPostResult);
-      } else {
-        result += `Move (${text}) failed`;
-      }
+      res.send(`Invalid move: *${text}* was not played`);
     }
   } catch (error) {
     console.error(error);
   }
-
-  res.send(result);
 };
 
 createNewGame = async (token) => {
@@ -160,6 +158,11 @@ createNewGame = async (token) => {
 
   return {};
 };
+
+getLichessToken = (playingAs = '') =>
+  playingAs.toLowerCase() === 'larry'
+    ? process.env.LARRY_LICHESS_TOKEN
+    : process.env.CARRIE_LICHESS_TOKEN;
 
 getChessEmoji = (color, piece) => {
   if (color === 'white') {
