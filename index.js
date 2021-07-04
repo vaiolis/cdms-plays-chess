@@ -50,6 +50,11 @@ app
       playMove(req, res, process.env.CARRIE_LICHESS_TOKEN)
     );
   })
+  .post('/play', (req, res) => {
+    signVerification(req, res, () =>
+      playMove(req, res)
+    );
+  })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, token) => {
@@ -61,6 +66,17 @@ playMove = async (req, res, token) => {
   let gameId = '';
 
   try {
+    const dbClient = await pool.connect();
+    const dbResult = await dbClient.query({
+      text: `SELECT * FROM moves WHERE username = $1 ORDER BY move_id DESC LIMIT 1`,
+      values: [user_name],
+    });
+
+    if (dbResult.rows && dbResult.rows.length) {
+      console.log(dbResult.rows[0]);
+      console.log(`time since last move: ` + ((new Date()).getTime() - Date.parse(dbResult.rows[0].created_at)));
+    }
+
     const currentlyPlayingResponse = await fetch(
       'https://lichess.org/api/account/playing',
       { headers }
