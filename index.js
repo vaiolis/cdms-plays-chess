@@ -15,7 +15,7 @@ const pool = new Pool({
 
 // WebClient instantiates a client that can call API methods
 // When using Bolt, you can use either `app.client` or the `client` passed to listeners.
-const client = new WebClient(process.env.SLACK_BOT_TOKEN, {
+const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN, {
   // LogLevel can be imported and used to make debugging simpler
   logLevel: LogLevel.DEBUG,
 });
@@ -70,7 +70,8 @@ playMove = async (req, res, playingAs) => {
         new Date().getTime() - Date.parse(dbResult.rows[0].created_at);
       console.log(`time since last move: ` + timeSinceLastMove);
       if (timeSinceLastMove < process.env.MOVE_TIMEOUT) {
-        res.send('please wait 1 minute between moves');
+        res.send('🕒 Please wait 1 minute between moves');
+        dbClient.release();
         return;
       }
     }
@@ -97,6 +98,7 @@ playMove = async (req, res, playingAs) => {
 
     if (ongoingGameExists && !currentlyPlayingJson.nowPlaying[0].isMyTurn) {
       res.send('It is not your turn to play a move!');
+      dbClient.release();
       return;
     }
 
@@ -107,17 +109,22 @@ playMove = async (req, res, playingAs) => {
 
     if (playMoveResponse.ok) {
       res.send(`*${text}* was successfully played`);
-      const channelPostResult = await client.chat.postMessage({
+      slackClient.chat.postMessage({
         channel: process.env.CHANNEL_ID,
         text: `${getChessEmoji(
           'black',
           'pawn'
-        )} ${user_name} played (${text})\nView ongoing game at https://lichess.org/${gameId}`,
+        )} ${user_name} played *${text}*\n>View ongoing game at https://lichess.org/${gameId}`,
       });
-      console.log(channelPostResult);
+      dbClient.query({
+        text: `INSERT INTO moves(username, move, team, game_id) VALUES($1, $2, $3, $4)`,
+        values: [user_name, text, playingAs, gameId],
+      });
     } else {
       res.send(`Invalid move: *${text}* was not played`);
     }
+
+    dbClient.release();
   } catch (error) {
     console.error(error);
   }
