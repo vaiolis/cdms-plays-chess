@@ -1,6 +1,5 @@
 // Require the Node Slack SDK package (github.com/slackapi/node-slack-sdk)
 const { WebClient, LogLevel } = require('@slack/web-api');
-const cool = require('cool-ascii-faces');
 const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
@@ -29,35 +28,17 @@ app
   .set('views', path.join(__dirname, 'views'))
   .set('view engine', 'ejs')
   .get('/', (req, res) => res.render('pages/index'))
-  .get('/cool', (req, res) => res.send(cool()))
-  .get('/times', (req, res) => res.send(showTimes()))
   .get('/db', async (req, res) => {
     try {
-      const client = await pool.connect();
-      const result = await client.query('SELECT * FROM test_table');
+      const dbClient = await pool.connect();
+      const result = await dbClient.query('SELECT * FROM test_table');
       const results = { results: result ? result.rows : null };
       res.render('pages/db', results);
-      client.release();
+      dbClient.release();
     } catch (err) {
       console.error(err);
       res.send('Error ' + err);
     }
-  })
-  .post('/testcool', (req, res) => {
-    signVerification(req, res, async () => {
-      const { text, user_name } = req.body;
-      try {
-        const result = await client.chat.postMessage({
-          channel: process.env.CHANNEL_ID,
-          text: `${user_name} sent ${text}: ${cool()}`,
-        });
-        console.log(result);
-      } catch (error) {
-        console.error(error);
-      }
-
-      res.sendStatus(200);
-    });
   })
   .post('/playLarry', (req, res) => {
     signVerification(req, res, () =>
@@ -70,15 +51,6 @@ app
     );
   })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
-
-showTimes = () => {
-  let result = '';
-  const times = process.env.TIMES || 5;
-  for (i = 0; i < times; i++) {
-    result += i + ' ';
-  }
-  return result;
-};
 
 playMove = async (req, res, token) => {
   const { text, user_name } = req.body;
@@ -144,7 +116,6 @@ createNewGame = async () => {
       { method: 'post', headers, body: params }
     );
     const responseJson = await response.json();
-    console.log(responseJson);
     return responseJson;
   } catch (error) {
     console.error(error);
