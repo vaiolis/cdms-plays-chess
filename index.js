@@ -2,6 +2,7 @@ const cool = require('cool-ascii-faces');
 const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
+const fetch = require('node-fetch');
 const PORT = process.env.PORT || 5000;
 
 const pool = new Pool({
@@ -29,8 +30,12 @@ express()
     }
   })
   .post('/testcool', (req, res) => {
-    const { text, user_name } = req;
-    res.send(`${user_name} sent ${text}: ${cool()}`);
+    const { text, user_name, token } = req.body;
+    if (process.env.SLACK_BOT_TOKEN !== token) {
+      res.send('invalid token');
+    } else {
+      res.send(`${user_name} sent ${text}: ${cool()}`);
+    }
   })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
