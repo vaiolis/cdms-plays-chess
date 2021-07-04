@@ -6,7 +6,10 @@ const { Pool } = require('pg');
 const fetch = require('node-fetch');
 const signVerification = require('./signVerification');
 const { URLSearchParams } = require('url');
+const { Chess } = require('chess.js');
 const PORT = process.env.PORT || 5000;
+const CARRIE = 'carrie';
+const LARRY = 'larry';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -41,26 +44,23 @@ app
     }
   })
   .post('/playLarry', (req, res) => {
-    signVerification(req, res, () => playMove(req, res, 'larry'));
+    signVerification(req, res, () => playMove(req, res, LARRY));
   })
   .post('/playCarrie', (req, res) => {
-    signVerification(req, res, () => playMove(req, res, 'carrie'));
+    signVerification(req, res, () => playMove(req, res, CARRIE));
   })
   .post('/play', (req, res) => {
     signVerification(req, res, () => playMove(req, res));
   })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
-playMove = async (req, res, playingAs) => {
+playMove = async (req, res, playingAsArg) => {
   const { text, user_name } = req.body;
+  let playingAs = playingAsArg || getRandomPlayer();
 
   try {
-    const [gameId, isNotMyTurn] = await getGameMetadata(playingAs);
-
-    if (isNotMyTurn) {
-      res.send('It is not your turn to play a move!');
-      return;
-    }
+    const [gameId, ongoingGameExists, isPlayerTurn, fenString] =
+      await getGameMetadata(playingAs);
 
     const dbClient = await pool.connect();
     const dbResult = await dbClient.query({
@@ -87,8 +87,28 @@ playMove = async (req, res, playingAs) => {
       }
     }
 
+    if (ongoingGameExists && !isPlayerTurn) {
+      playingAs = getOtherPlayer(playingAs);
+    }
+
+    let chess;
+    if (ongoingGameExists && fenString) {
+      chess = new Chess(fenString);
+    } else {
+      chess = new Chess();
+    }
+
+    const moveResult = chess.move(text, { sloppy: true });
+    if (moveResult == null) {
+      res.send(`🚫 Invalid move: *${text}* was not played`);
+      return;
+    }
+
+    const lastMove = getLastMove(chess);
+    const uciMove = `${lastMove.from}${lastMove.to}`;
+
     const playMoveResponse = await fetch(
-      `https://lichess.org/api/board/game/${gameId}/move/${text}`,
+      `https://lichess.org/api/board/game/${gameId}/move/${uciMove}`,
       { method: 'post', headers: buildAuthHeader(playingAs) }
     );
 
@@ -97,8 +117,8 @@ playMove = async (req, res, playingAs) => {
       slackClient.chat.postMessage({
         channel: process.env.CHANNEL_ID,
         text: `${getChessEmoji(
-          'black',
-          'pawn'
+          lastMove.color,
+          lastMove.piece
         )} ${user_name} played *${text}*\n>View ongoing game at https://lichess.org/${gameId}`,
       });
       dbClient.query({
@@ -115,6 +135,15 @@ playMove = async (req, res, playingAs) => {
   }
 };
 
+getRandomPlayer = () => (Math.random() < 0.5 ? CARRIE : LARRY);
+
+getOtherPlayer = (playingAs) => (playingAs === CARRIE ? LARRY : CARRIE);
+
+getLastMove = (chess) => {
+  const history = chess.history({ verbose: true });
+  return history[history.length - 1];
+};
+
 buildAuthHeader = (playingAs) => ({
   Authorization: 'Bearer ' + getLichessToken(playingAs),
 });
@@ -129,6 +158,9 @@ getGameMetadata = async (playingAs) => {
     currentlyPlayingJson &&
     currentlyPlayingJson.nowPlaying &&
     currentlyPlayingJson.nowPlaying.length;
+  const isPlayerTurn =
+    ongoingGameExists && currentlyPlayingJson.nowPlaying[0].isMyTurn;
+  const fenString = ongoingGameExists && currentlyPlayingJson.nowPlaying[0].fen;
   let gameId;
 
   if (ongoingGameExists) {
@@ -141,10 +173,7 @@ getGameMetadata = async (playingAs) => {
     gameId = createNewGameJson.game.id;
   }
 
-  return [
-    gameId,
-    ongoingGameExists && !currentlyPlayingJson.nowPlaying[0].isMyTurn,
-  ];
+  return [gameId, ongoingGameExists, isPlayerTurn, fenString];
 };
 
 createNewGame = async (token) => {
@@ -155,6 +184,8 @@ createNewGame = async (token) => {
   const params = new URLSearchParams();
   params.append('color', 'white');
   params.append('rated', false);
+  params.append('clock.limit', 900);
+  params.append('clock.increment', 0);
   params.append(
     'acceptByToken',
     token === process.env.LARRY_LICHESS_TOKEN
@@ -184,37 +215,37 @@ createNewGame = async (token) => {
 };
 
 getLichessToken = (playingAs = '') =>
-  playingAs.toLowerCase() === 'larry'
+  playingAs.toLowerCase() === LARRY
     ? process.env.LARRY_LICHESS_TOKEN
     : process.env.CARRIE_LICHESS_TOKEN;
 
 getChessEmoji = (color, piece) => {
-  if (color === 'white') {
+  if (color === 'w') {
     switch (piece) {
-      case 'king':
+      case 'k':
         return '♔';
-      case 'queen':
+      case 'q':
         return '♕';
-      case 'rook':
+      case 'r':
         return '♖';
-      case 'knight':
+      case 'n':
         return '♘';
-      case 'bishop':
+      case 'b':
         return '♗';
       default:
         return '♙';
     }
   } else {
     switch (piece) {
-      case 'king':
+      case 'k':
         return '♚';
-      case 'queen':
+      case 'q':
         return '♛';
-      case 'rook':
+      case 'r':
         return '♜';
-      case 'knight':
+      case 'n':
         return '♞';
-      case 'bishop':
+      case 'b':
         return '♝';
       default:
         return '♟️';
