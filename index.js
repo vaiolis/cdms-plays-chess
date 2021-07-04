@@ -58,6 +58,20 @@ app
       res.sendStatus(200);
     });
   })
+  .post('/playLarry', (req, res) => {
+    signVerification(
+      req,
+      res,
+      () => playMove(req, res, process.env.LARRY_LICHESS_TOKEN)
+    );
+  })
+  .post('/playCarrie', (req, res) => {
+    signVerification(
+      req,
+      res,
+      () => playMove(req, res, process.env.CARRIE_LICHESS_TOKEN)
+    );
+  })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 showTimes = () => {
@@ -67,4 +81,35 @@ showTimes = () => {
     result += i + ' ';
   }
   return result;
+};
+
+playMove = async (req, res, token) => {
+  const { text, user_name } = req.body;
+  const headers = {
+    Authorization: 'Bearer ' + token,
+  };
+  let result = '';
+
+  try {
+    const response = await fetch(
+      'https://lichess.org/api/account/playing',
+      headers
+    );
+    const resJson = await response.json();
+    if (resJson?.nowPlaying.length) {
+      const currentGame = resJson.nowPlaying[0];
+      console.log('current game ID: ' + currentGame.gameId);
+      result =
+        'Current game ID is ' +
+        currentGame.gameId +
+        ' and the last move played was ' +
+        currentGame.lastMove;
+    } else {
+      result = 'Could not find ongoing game';
+    }
+  } catch (error) {
+    console.error(error);
+  }
+
+  res.send(result);
 };
