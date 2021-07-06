@@ -31,18 +31,6 @@ app
   .set('views', path.join(__dirname, 'views'))
   .set('view engine', 'ejs')
   .get('/', (req, res) => res.render('pages/index'))
-  .get('/db', async (req, res) => {
-    try {
-      const dbClient = await pool.connect();
-      const result = await dbClient.query('SELECT * FROM test_table');
-      const results = { results: result ? result.rows : null };
-      res.render('pages/db', results);
-      dbClient.release();
-    } catch (err) {
-      console.error(err);
-      res.send('Error ' + err);
-    }
-  })
   .post('/playLarry', (req, res) => {
     signVerification(req, res, () => playMove(req, res, LARRY));
   })
