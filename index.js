@@ -5,6 +5,7 @@ const path = require('path');
 const { Pool } = require('pg');
 const fetch = require('node-fetch');
 const signVerification = require('./signVerification');
+const util = require('./util.js');
 const { URLSearchParams } = require('url');
 const { Chess } = require('chess.js');
 const PORT = process.env.PORT || 5000;
@@ -42,6 +43,9 @@ app
   })
   .post('/board', (req, res) => {
     signVerification(req, res, () => getBoardUrl(req, res));
+  })
+  .post('/matchHistory', (req, res) => {
+    signVerification(req, res, () => getMatchHistory(req, res));
   })
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
@@ -91,8 +95,8 @@ playMove = async (req, res, playingAsArg) => {
       playingAs = userMovesResult.rows[0].team;
       */
 
-      // Temporarily allow play for both sides
-      if (!isPlayerTurn) {
+      // Temporarily allow play for both sides if player isn't explicitly mentioned
+      if (!isPlayerTurn && !playingAsArg) {
         playingAs = getOtherPlayer(playingAs);
       }
     } else if (ongoingGameExists && !isPlayerTurn) {
@@ -100,7 +104,7 @@ playMove = async (req, res, playingAsArg) => {
       playingAs = getOtherPlayer(playingAs);
     }
 
-    // TODO store game history, implement database lock
+    // TODO implement database lock
     let chess;
     const boardResult = await dbClient.query({
       text: `SELECT * FROM boards WHERE game_id = $1 LIMIT 1`,
@@ -139,7 +143,7 @@ playMove = async (req, res, playingAsArg) => {
       res.send(`*${text}* was successfully played`);
       slackClient.chat.postMessage({
         channel: process.env.CHANNEL_ID,
-        text: `${getChessEmoji(
+        text: `${util.getChessEmoji(
           lastMove.color,
           lastMove.piece,
         )} ${user_name} played *${text}*${gameUrlText}`,
@@ -243,40 +247,6 @@ getLichessToken = (playingAs = '') =>
     ? process.env.LARRY_LICHESS_TOKEN
     : process.env.CARRIE_LICHESS_TOKEN;
 
-getChessEmoji = (color, piece) => {
-  if (color === 'w') {
-    switch (piece) {
-      case 'k':
-        return '♔';
-      case 'q':
-        return '♕';
-      case 'r':
-        return '♖';
-      case 'n':
-        return '♘';
-      case 'b':
-        return '♗';
-      default:
-        return '♙';
-    }
-  } else {
-    switch (piece) {
-      case 'k':
-        return '♚';
-      case 'q':
-        return '♛';
-      case 'r':
-        return '♜';
-      case 'n':
-        return '♞';
-      case 'b':
-        return '♝';
-      default:
-        return '♟️';
-    }
-  }
-};
-
 getBoardUrl = async (req, res) => {
   try {
     const randomPlayer = getRandomPlayer();
@@ -298,6 +268,32 @@ getBoardUrl = async (req, res) => {
         `👻 No ongoing game exists, use the '/play' command to start a new board!`,
       );
     }
+  } catch (error) {
+    console.error(error);
+  }
+};
+
+getMatchHistory = async (req, res) => {
+  const { user_name } = req.body;
+  try {
+    const dbClient = await pool.connect();
+    const userGamesResult = await dbClient.query({
+      text: `SELECT DISTINCT ON (boards.game_id) boards.game_id, fen, team, result from boards INNER JOIN moves ON boards.game_id = moves.game_id WHERE username = $1`,
+      values: [user_name],
+    });
+
+    const games = userGamesResult.rows || [];
+    const wins = games.reduce((wins, game) => {
+      if (game.result && game.team.toUpperCase().startsWith(game.result)) {
+        return wins + 1;
+      }
+      return wins;
+    }, 0);
+
+    // TODO calculate results of games with unpopulated results by using ChessJs
+
+    res.send(`🏆 You've won ${wins} out of ${games.length} games`);
+    dbClient.release();
   } catch (error) {
     console.error(error);
   }
