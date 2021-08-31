@@ -47,18 +47,18 @@ playMove = async (req, res, playingAsArg) => {
   let playingAs = playingAsArg || getRandomPlayer();
 
   try {
-    const [gameId, ongoingGameExists, isPlayerTurn, fenString] =
+    const [gameId, ongoingGameExists, isPlayerTurn] =
       await getGameMetadata(playingAs);
 
     const dbClient = await pool.connect();
-    const dbResult = await dbClient.query({
+    const userMovesResult = await dbClient.query({
       text: `SELECT * FROM moves WHERE username = $1 AND game_id = $2 ORDER BY move_id DESC LIMIT 1`,
       values: [user_name, gameId],
     });
 
-    if (dbResult.rows && dbResult.rows.length) {
+    if (userMovesResult.rows && userMovesResult.rows.length) {
       const timeSinceLastMove =
-        new Date().getTime() - Date.parse(dbResult.rows[0].created_at);
+        new Date().getTime() - Date.parse(userMovesResult.rows[0].created_at);
       console.log(`time since last move: ` + timeSinceLastMove);
 
       if (timeSinceLastMove < process.env.MOVE_TIMEOUT) {
@@ -67,34 +67,46 @@ playMove = async (req, res, playingAsArg) => {
         return;
       }
 
+      /*
       if (
-        (playingAs === dbResult.rows[0].team && !isPlayerTurn) ||
-        (playingAs !== dbResult.rows[0].team && isPlayerTurn)
+        (playingAs === userMovesResult.rows[0].team && !isPlayerTurn) ||
+        (playingAs !== userMovesResult.rows[0].team && isPlayerTurn)
       ) {
         res.send(
-          `⛔ You are playing for ${dbResult.rows[0].team}, please wait until it is your turn to move`
+          `⛔ You are playing for ${userMovesResult.rows[0].team}, please wait until it is your turn to move`
         );
         dbClient.release();
         return;
       }
 
       // Make user play moves associated with their current team
-      playingAs = dbResult.rows[0].team;
+      playingAs = userMovesResult.rows[0].team;
+      */
+
+     // Temporarily allow play for both sides
+     if (!isPlayerTurn) {
+       playingAs = getOtherPlayer(playingAs);
+     }
 
     } else if (ongoingGameExists && !isPlayerTurn) {
       // If user is not on a team, make sure their next move is for the current team-to-play
       playingAs = getOtherPlayer(playingAs);
     }
 
-    /* TODO store game history, implement database lock
+    // TODO store game history, implement database lock
     let chess;
-    if (ongoingGameExists && fenString) {
-      chess = new Chess(fenString);
+    const boardResult = await dbClient.query({
+      text: `SELECT * FROM boards WHERE game_id = $1 LIMIT 1`,
+      values: [gameId],
+    });
+
+    const currentBoardFen = boardResult.rows[0]?.fen;
+    console.log(`DB Board Fen: ${currentBoardFen}`);
+    if (ongoingGameExists && currentBoardFen) {
+      chess = new Chess(currentBoardFen);
     } else {
       chess = new Chess();
     }
-
-    console.log(chess.history());
 
     const moveResult = chess.move(text, { sloppy: true });
     if (moveResult == null) {
@@ -102,14 +114,13 @@ playMove = async (req, res, playingAsArg) => {
       dbClient.release();
       return;
     }
+    const nextBoardFen = chess.fen();
 
-    console.log(moveResult);
     const lastMove = getLastMove(chess);
     const uciMove = `${lastMove.from}${lastMove.to}`;
-    */
 
     const playMoveResponse = await fetch(
-      `https://lichess.org/api/board/game/${gameId}/move/${text}`,
+      `https://lichess.org/api/board/game/${gameId}/move/${uciMove}`,
       { method: 'post', headers: buildAuthHeader(playingAs) }
     );
 
@@ -118,13 +129,17 @@ playMove = async (req, res, playingAsArg) => {
       slackClient.chat.postMessage({
         channel: process.env.CHANNEL_ID,
         text: `${getChessEmoji(
-          'b',
-          'p'
+          lastMove.color,
+          lastMove.piece,
         )} ${user_name} played *${text}*\n>View ongoing game at https://lichess.org/${gameId}`,
       });
       dbClient.query({
         text: `INSERT INTO moves(username, move, team, game_id) VALUES($1, $2, $3, $4)`,
         values: [user_name, text, playingAs, gameId],
+      });
+      dbClient.query({
+        text: `INSERT INTO boards(game_id, fen) VALUES($1, $2) ON CONFLICT (game_id) DO UPDATE SET fen = EXCLUDED.fen`,
+        values: [gameId, nextBoardFen],
       });
     } else {
       res.send(`🚫 Invalid move: *${text}* was not played`);
