@@ -47,6 +47,9 @@ app
   .post('/matchHistory', (req, res) => {
     signVerification(req, res, () => getMatchHistory(req, res));
   })
+  .post('/playNoSlack', (req, res) => playMove(req, res))
+  .post('/boardNoSlack', (req, res) => getBoardUrl(req, res))
+  .post('/matchHistoryNoSlack', (req, res) => getMatchHistory(req, res))
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, playingAsArg) => {
