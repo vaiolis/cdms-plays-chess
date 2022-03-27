@@ -137,7 +137,7 @@ playMove = async (req, res, playingAsArg) => {
       chess = new Chess();
     }
 
-    const moveResult = chess.move(text, { sloppy: true });
+    const moveResult = chess.move(text);
     if (moveResult == null) {
       console.error(`Move: ${text} was determined invalid by ChessJS and not played.`);
       res.send(`🚫 Invalid move: *${text}* was not played`);
@@ -147,6 +147,7 @@ playMove = async (req, res, playingAsArg) => {
     const nextBoardFen = chess.fen();
     const lastMove = getLastMove(chess);
     const uciMove = `${lastMove.from}${lastMove.to}`;
+    const isGameOver = chess.game_over();
 
     const playMoveResponse = await fetch(
       `https://lichess.org/api/board/game/${gameId}/move/${uciMove}`,
@@ -170,10 +171,25 @@ playMove = async (req, res, playingAsArg) => {
         text: `INSERT INTO moves(username, move, team, game_id) VALUES($1, $2, $3, $4)`,
         values: [user_name, text, playingAs, gameId],
       });
-      dbClient.query({
-        text: `INSERT INTO boards(game_id, fen) VALUES($1, $2) ON CONFLICT (game_id) DO UPDATE SET fen = EXCLUDED.fen`,
-        values: [gameId, nextBoardFen],
-      });
+
+      if (isGameOver) {
+        let result;
+        if (chess.in_checkmate()) {
+          result = playingAs.toUpperCase().charAt(0);
+        } else {
+          result = 'D';
+        }
+
+        dbClient.query({
+          text: `INSERT INTO boards(game_id, fen, current_team, result) VALUES($1, $2, $3, $4) ON CONFLICT (game_id) DO UPDATE SET fen = EXCLUDED.fen, current_team = EXCLUDED.current_team, result = EXCLUDED.result`,
+          values: [gameId, nextBoardFen, getOtherPlayer(playingAs), result],
+        });
+      } else {
+        dbClient.query({
+          text: `INSERT INTO boards(game_id, fen, current_team) VALUES($1, $2, $3) ON CONFLICT (game_id) DO UPDATE SET fen = EXCLUDED.fen, current_team = EXCLUDED.current_team`,
+          values: [gameId, nextBoardFen, getOtherPlayer(playingAs)],
+        });
+      }
     } else {
       console.error(`Move: ${text} was attempted with Lichess and was rejected`);
       res.send(`🚫 Invalid move: *${text}* was not played`);
@@ -252,7 +268,7 @@ createNewGame = async (token) => {
   const params = new URLSearchParams();
   params.append('color', 'white');
   params.append('rated', false);
-  params.append('clock.limit', 900);
+  params.append('clock.limit', 600);
   params.append('clock.increment', 0);
   params.append(
     'acceptByToken',
