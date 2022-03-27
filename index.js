@@ -8,6 +8,15 @@ const signVerification = require('./signVerification');
 const util = require('./util.js');
 const { URLSearchParams } = require('url');
 const { Chess } = require('chess.js');
+const Queue = require('bee-queue');
+
+const carrieValidationQueue = new Queue('validateCarrieMove', {
+  redis: process.env.REDIS_URL,
+});
+const larryValidationQueue = new Queue('validateLarryMove', {
+  redis: process.env.REDIS_URL,
+});
+
 const PORT = process.env.PORT || 5000;
 const CARRIE = 'carrie';
 const LARRY = 'larry';
@@ -22,6 +31,16 @@ const pool = new Pool({
 const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN, {
   // LogLevel can be imported and used to make debugging simpler
   logLevel: LogLevel.DEBUG,
+});
+
+carrieValidationQueue.process(async (job) => {
+  console.log(`Processing carrie job ${job.id}`);
+  return job.data;
+});
+
+larryValidationQueue.process(async (job) => {
+  console.log(`Processing larry job ${job.id}`);
+  return job.data;
 });
 
 const app = new express();
@@ -50,6 +69,7 @@ app
   .post('/playNoSlack', (req, res) => playMove(req, res))
   .post('/boardNoSlack', (req, res) => getBoardUrl(req, res))
   .post('/matchHistoryNoSlack', (req, res) => getMatchHistory(req, res))
+  .post('/testQueueNoSlack', (req, res) => testQueue(req, res))
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, playingAsArg) => {
@@ -57,20 +77,23 @@ playMove = async (req, res, playingAsArg) => {
   let playingAs = playingAsArg || getRandomPlayer();
 
   try {
+    const dbClient = await pool.connect();
     const [gameId, ongoingGameExists, isPlayerTurn] = await getGameMetadata(
+      dbClient,
       playingAs,
     );
 
-    const dbClient = await pool.connect();
     const userMovesResult = await dbClient.query({
       text: `SELECT * FROM moves WHERE username = $1 AND game_id = $2 ORDER BY move_id DESC LIMIT 1`,
       values: [user_name, gameId],
     });
 
     if (userMovesResult.rows && userMovesResult.rows.length) {
+      const currentMoveRow = userMovesResult.rows[0];
+
       const timeSinceLastMove =
-        new Date().getTime() - Date.parse(userMovesResult.rows[0].created_at);
-      console.log(`time since last move: ` + timeSinceLastMove);
+        new Date().getTime() - Date.parse(currentMoveRow.created_at);
+      // console.log(`time since last move: ` + timeSinceLastMove);
 
       if (timeSinceLastMove < process.env.MOVE_TIMEOUT) {
         res.send(
@@ -82,32 +105,24 @@ playMove = async (req, res, playingAsArg) => {
         return;
       }
 
-      /*
       if (
-        (playingAs === userMovesResult.rows[0].team && !isPlayerTurn) ||
-        (playingAs !== userMovesResult.rows[0].team && isPlayerTurn)
+        (playingAs === currentMoveRow.team && !isPlayerTurn) ||
+        (playingAs !== currentMoveRow.team && isPlayerTurn)
       ) {
         res.send(
-          `⛔ You are playing for ${userMovesResult.rows[0].team}, please wait until it is your turn to move`
+          `⛔ You are playing for ${currentMoveRow.team}, please wait until it is your turn to move`
         );
         dbClient.release();
         return;
       }
 
       // Make user play moves associated with their current team
-      playingAs = userMovesResult.rows[0].team;
-      */
-
-      // Temporarily allow play for both sides if player isn't explicitly mentioned
-      if (!isPlayerTurn && !playingAsArg) {
-        playingAs = getOtherPlayer(playingAs);
-      }
+      playingAs = currentMoveRow.team;
     } else if (ongoingGameExists && !isPlayerTurn) {
       // If user is not on a team, make sure their next move is for the current team-to-play
       playingAs = getOtherPlayer(playingAs);
     }
 
-    // TODO implement database lock
     let chess;
     const boardResult = await dbClient.query({
       text: `SELECT * FROM boards WHERE game_id = $1 LIMIT 1`,
@@ -115,7 +130,7 @@ playMove = async (req, res, playingAsArg) => {
     });
 
     const currentBoardFen = boardResult.rows[0]?.fen;
-    console.log(`DB Board Fen: ${currentBoardFen}`);
+    // console.log(`DB Board Fen: ${currentBoardFen}`);
     if (ongoingGameExists && currentBoardFen) {
       chess = new Chess(currentBoardFen);
     } else {
@@ -124,12 +139,12 @@ playMove = async (req, res, playingAsArg) => {
 
     const moveResult = chess.move(text, { sloppy: true });
     if (moveResult == null) {
+      console.error(`Move: ${text} was determined invalid by ChessJS and not played.`);
       res.send(`🚫 Invalid move: *${text}* was not played`);
       dbClient.release();
       return;
     }
     const nextBoardFen = chess.fen();
-
     const lastMove = getLastMove(chess);
     const uciMove = `${lastMove.from}${lastMove.to}`;
 
@@ -160,6 +175,7 @@ playMove = async (req, res, playingAsArg) => {
         values: [gameId, nextBoardFen],
       });
     } else {
+      console.error(`Move: ${text} was attempted with Lichess and was rejected`);
       res.send(`🚫 Invalid move: *${text}* was not played`);
     }
 
@@ -182,7 +198,27 @@ buildAuthHeader = (playingAs) => ({
   Authorization: 'Bearer ' + getLichessToken(playingAs),
 });
 
-getGameMetadata = async (playingAs) => {
+getGameMetadata = async (dbClient, playingAs) => {
+  const lastGameResult = await dbClient.query(
+    'SELECT * FROM boards ORDER BY created_at DESC LIMIT 1',
+  );
+  const row = lastGameResult.rows[0];
+
+  let ongoingGameExists;
+  let gameId;
+  let isPlayerTurn;
+  if (!row?.result) {
+    gameId = row?.game_id;
+    ongoingGameExists = true;
+    isPlayerTurn = row?.current_team === playingAs;
+  } else {
+    const createNewGameJson = await createNewGame(getLichessToken(playingAs));
+    gameId = createNewGameJson.game.id;
+    ongoingGameExists = false;
+    isPlayerTurn = true;
+  }
+
+  /*
   const currentlyPlayingResponse = await fetch(
     'https://lichess.org/api/account/playing',
     { headers: buildAuthHeader(playingAs) },
@@ -203,6 +239,7 @@ getGameMetadata = async (playingAs) => {
     gameId = createNewGameJson.game.id;
     console.log('Created new game with ID ' + gameId);
   }
+  */
 
   return [gameId, ongoingGameExists, isPlayerTurn];
 };
@@ -299,5 +336,29 @@ getMatchHistory = async (req, res) => {
     dbClient.release();
   } catch (error) {
     console.error(error);
+  }
+};
+
+testQueue = async (req, res) => {
+  const player = getRandomPlayer();
+  try {
+    if (player === CARRIE) {
+      const carrieJob = carrieValidationQueue.createJob({ foo: 'bar' });
+      const jobComplete = await carrieJob.timeout(3000).retries(1).save();
+
+      res.send(
+        `Carrie job with id: ${carrieJob.id} completed with data: ${jobComplete}`,
+      );
+    } else {
+      const larryJob = larryValidationQueue.createJob({ fuz: 'wuz' });
+      const jobComplete = await larryJob.timeout(3000).retries(1).save();
+
+      res.send(
+        `Larry job with id: ${larryJob.id} completed with data: ${jobComplete}`,
+      );
+    }
+  } catch (error) {
+    console.log(error);
+    res.send('Some error occurred');
   }
 };
