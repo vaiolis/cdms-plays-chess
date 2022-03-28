@@ -10,10 +10,7 @@ const { URLSearchParams } = require('url');
 const { Chess } = require('chess.js');
 const Queue = require('bee-queue');
 
-const carrieValidationQueue = new Queue('validateCarrieMove', {
-  redis: process.env.REDIS_URL,
-});
-const larryValidationQueue = new Queue('validateLarryMove', {
+const moveValidationQueue = new Queue('validateMove', {
   redis: process.env.REDIS_URL,
 });
 
@@ -33,14 +30,10 @@ const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN, {
   logLevel: LogLevel.DEBUG,
 });
 
-carrieValidationQueue.process(async (job) => {
-  console.log(`Processing carrie job ${job.id}`);
-  return job.data;
-});
-
-larryValidationQueue.process(async (job) => {
-  console.log(`Processing larry job ${job.id}`);
-  return job.data;
+moveValidationQueue.process(async (job) => {
+  console.log(`Processing job ${job.id}`);
+  const result = await processMove(job.data);
+  return result;
 });
 
 const app = new express();
@@ -69,15 +62,15 @@ app
   .post('/playNoSlack', (req, res) => playMove(req, res))
   .post('/boardNoSlack', (req, res) => getBoardUrl(req, res))
   .post('/matchHistoryNoSlack', (req, res) => getMatchHistory(req, res))
-  .post('/testQueueNoSlack', (req, res) => testQueue(req, res))
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, playingAsArg) => {
   const { text, user_name } = req.body;
   let playingAs = playingAsArg || getRandomPlayer();
+  let dbClient;
 
   try {
-    const dbClient = await pool.connect();
+    dbClient = await pool.connect();
     const [gameId, ongoingGameExists, isPlayerTurn] = await getGameMetadata(
       dbClient,
       playingAs,
@@ -110,7 +103,7 @@ playMove = async (req, res, playingAsArg) => {
         (playingAs !== currentMoveRow.team && isPlayerTurn)
       ) {
         res.send(
-          `⛔ You are playing for ${currentMoveRow.team}, please wait until it is your turn to move`
+          `⛔ You are playing for ${currentMoveRow.team}, please wait until it is your turn to move`,
         );
         dbClient.release();
         return;
@@ -122,6 +115,33 @@ playMove = async (req, res, playingAsArg) => {
       // If user is not on a team, make sure their next move is for the current team-to-play
       playingAs = getOtherPlayer(playingAs);
     }
+
+    const jobData = {
+      gameId,
+      ongoingGameExists,
+      playingAs,
+      user_name,
+      suggestedMove: text,
+    };
+
+    const moveValidationJob = moveValidationQueue.createJob(jobData);
+    moveValidationJob.timeout(3000).retries(1).save();
+    res.send(`✅ Move submitted!`);
+    dbClient.release();
+  } catch (error) {
+    console.error(error);
+    dbClient?.release();
+  }
+};
+
+processMove = async (jobData) => {
+  const { gameId, ongoingGameExists, playingAs, suggestedMove, user_name } =
+    jobData;
+  let dbClient;
+  let message;
+
+  try {
+    dbClient = await pool.connect();
 
     let chess;
     const boardResult = await dbClient.query({
@@ -137,13 +157,19 @@ playMove = async (req, res, playingAsArg) => {
       chess = new Chess();
     }
 
-    const moveResult = chess.move(text);
+    const moveResult = chess.move(suggestedMove);
     if (moveResult == null) {
-      console.error(`Move: ${text} was determined invalid by ChessJS and not played.`);
-      res.send(`🚫 Invalid move: *${text}* was not played`);
+      console.error(
+        `🚫 Invalid Move: ${suggestedMove} was determined invalid by ChessJS and not played.`,
+      );
+      message = `🚫 Invalid move: *${suggestedMove}* was not played`;
       dbClient.release();
-      return;
+      return {
+        result: 'error',
+        message,
+      };
     }
+
     const nextBoardFen = chess.fen();
     const lastMove = getLastMove(chess);
     const uciMove = `${lastMove.from}${lastMove.to}`;
@@ -154,22 +180,16 @@ playMove = async (req, res, playingAsArg) => {
       { method: 'post', headers: buildAuthHeader(playingAs) },
     );
 
-    const gameUrlText = !ongoingGameExists
+    const gameUrlText = (ongoingGameExists && boardResult.rows[0]?.move_count % 10 === 0)
       ? `\n>View ongoing game at https://lichess.org/${gameId}`
       : '';
 
     if (playMoveResponse.ok) {
-      res.send(`*${text}* was successfully played`);
-      slackClient.chat.postMessage({
-        channel: process.env.CHANNEL_ID,
-        text: `${util.getChessEmoji(
-          lastMove.color,
-          lastMove.piece,
-        )} ${user_name} played *${text}*${gameUrlText}`,
-      });
+      message = `*${suggestedMove}* was successfully played`;
+
       dbClient.query({
         text: `INSERT INTO moves(username, move, team, game_id) VALUES($1, $2, $3, $4)`,
-        values: [user_name, text, playingAs, gameId],
+        values: [user_name, suggestedMove, playingAs, gameId],
       });
 
       if (isGameOver) {
@@ -190,14 +210,46 @@ playMove = async (req, res, playingAsArg) => {
           values: [gameId, nextBoardFen, getOtherPlayer(playingAs)],
         });
       }
-    } else {
-      console.error(`Move: ${text} was attempted with Lichess and was rejected`);
-      res.send(`🚫 Invalid move: *${text}* was not played`);
-    }
 
-    dbClient.release();
+      const timeSinceLastUpdate = ongoingGameExists ?
+        new Date().getTime() - Date.parse(boardResult.rows[0]?.last_updated) : 1500;
+
+      if (timeSinceLastUpdate > 1499) {
+        slackClient.chat.postMessage({
+          channel: process.env.CHANNEL_ID,
+          text: `${util.getChessEmoji(
+            lastMove.color,
+            lastMove.piece,
+          )} ${user_name} played *${suggestedMove}*${gameUrlText}`,
+        });
+      }
+
+      console.log(
+        `✅ Valid Move: ${suggestedMove} was played by ${user_name} for board ${gameId}`,
+      );
+      dbClient.release();
+      return {
+        result: 'success',
+        message,
+      };
+    } else {
+      console.error(
+        `🚫 Attempted Move: ${suggestedMove} was attempted with Lichess and was rejected`,
+      );
+      message = `🚫 Invalid move: *${suggestedMove}* was not played`;
+      dbClient.release();
+      return {
+        result: 'error',
+        message,
+      };
+    }
   } catch (error) {
     console.error(error);
+    dbClient?.release();
+    return {
+      result: 'error',
+      message: '🚫 Unexpected Error: An unexpected error occurred',
+    };
   }
 };
 
@@ -223,7 +275,7 @@ getGameMetadata = async (dbClient, playingAs) => {
   let ongoingGameExists;
   let gameId;
   let isPlayerTurn;
-  if (!row?.result) {
+  if (row && !row?.result) {
     gameId = row?.game_id;
     ongoingGameExists = true;
     isPlayerTurn = row?.current_team === playingAs;
@@ -352,29 +404,5 @@ getMatchHistory = async (req, res) => {
     dbClient.release();
   } catch (error) {
     console.error(error);
-  }
-};
-
-testQueue = async (req, res) => {
-  const player = getRandomPlayer();
-  try {
-    if (player === CARRIE) {
-      const carrieJob = carrieValidationQueue.createJob({ foo: 'bar' });
-      const jobComplete = await carrieJob.timeout(3000).retries(1).save();
-
-      res.send(
-        `Carrie job with id: ${carrieJob.id} completed with data: ${jobComplete}`,
-      );
-    } else {
-      const larryJob = larryValidationQueue.createJob({ fuz: 'wuz' });
-      const jobComplete = await larryJob.timeout(3000).retries(1).save();
-
-      res.send(
-        `Larry job with id: ${larryJob.id} completed with data: ${jobComplete}`,
-      );
-    }
-  } catch (error) {
-    console.log(error);
-    res.send('Some error occurred');
   }
 };
