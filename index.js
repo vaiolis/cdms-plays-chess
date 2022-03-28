@@ -259,13 +259,15 @@ processMove = async (jobData) => {
         : 1500;
 
       if (timeSinceLastUpdate > 1499 || isGameOver) {
+        const newGameMessage = !ongoingGameExists ? '🆕 A new game has begun!\n' : '';
+
         const gameOverMessage = isGameOver
           ? '\n🏁 The current game is now over! Use /play to start a new one!'
           : '';
 
         slackClient.chat.postMessage({
           channel: process.env.CHANNEL_ID,
-          text: `${util.getChessEmoji(
+          text: `${newGameMessage}${util.getChessEmoji(
             lastMove.color,
             lastMove.piece,
           )} ${user_name} played *${suggestedMove}*${gameUrlText}${gameOverMessage}`,
