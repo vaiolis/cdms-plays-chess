@@ -5,6 +5,7 @@ const path = require('path');
 const { Pool } = require('pg');
 const fetch = require('node-fetch');
 const signVerification = require('./signVerification');
+const constants = require('./constants.js');
 const util = require('./util.js');
 const { URLSearchParams } = require('url');
 const { Chess } = require('chess.js');
@@ -14,7 +15,7 @@ const moveValidationQueue = new Queue('validateMove', {
   redis: process.env.REDIS_URL,
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || constants.DEFAULT_PORT;
 const CARRIE = 'carrie';
 const LARRY = 'larry';
 
@@ -31,7 +32,6 @@ const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN, {
 });
 
 moveValidationQueue.process(async (job) => {
-  console.log(`Processing job ${job.id}`);
   const result = await processMove(job.data);
   return result;
 });
@@ -45,10 +45,10 @@ app
   .set('view engine', 'ejs')
   .get('/', (req, res) => res.render('pages/index'))
   .post('/playLarry', (req, res) => {
-    signVerification(req, res, () => playMove(req, res, LARRY));
+    signVerification(req, res, () => playMove(req, res, constants.PLAYER_2));
   })
   .post('/playCarrie', (req, res) => {
-    signVerification(req, res, () => playMove(req, res, CARRIE));
+    signVerification(req, res, () => playMove(req, res, constants.PLAYER_1));
   })
   .post('/play', (req, res) => {
     signVerification(req, res, () => playMove(req, res));
@@ -66,7 +66,7 @@ app
 
 playMove = async (req, res, playingAsArg) => {
   const { text, user_name } = req.body;
-  let playingAs = playingAsArg || getRandomPlayer();
+  let playingAs = playingAsArg || util.getRandomPlayer();
   let dbClient;
 
   try {
@@ -86,7 +86,6 @@ playMove = async (req, res, playingAsArg) => {
 
       const timeSinceLastMove =
         new Date().getTime() - Date.parse(currentMoveRow.created_at);
-      // console.log(`time since last move: ` + timeSinceLastMove);
 
       if (timeSinceLastMove < process.env.MOVE_TIMEOUT) {
         res.send(
@@ -113,7 +112,7 @@ playMove = async (req, res, playingAsArg) => {
       playingAs = currentMoveRow.team;
     } else if (ongoingGameExists && !isPlayerTurn) {
       // If user is not on a team, make sure their next move is for the current team-to-play
-      playingAs = getOtherPlayer(playingAs);
+      playingAs = util.getOtherPlayer(playingAs);
     }
 
     const jobData = {
@@ -139,18 +138,18 @@ processMove = async (jobData) => {
     jobData;
   let dbClient;
   let message;
+  let chess;
 
   try {
     dbClient = await pool.connect();
 
-    let chess;
     const boardResult = await dbClient.query({
       text: `SELECT * FROM boards WHERE game_id = $1 LIMIT 1`,
       values: [gameId],
     });
 
     const currentBoardFen = boardResult.rows[0]?.fen;
-    // console.log(`DB Board Fen: ${currentBoardFen}`);
+    const currentMoveCount = boardResult.rows[0]?.move_count || 0;
     if (ongoingGameExists && currentBoardFen) {
       chess = new Chess(currentBoardFen);
     } else {
@@ -171,18 +170,19 @@ processMove = async (jobData) => {
     }
 
     const nextBoardFen = chess.fen();
-    const lastMove = getLastMove(chess);
+    const lastMove = util.getLastMove(chess);
     const uciMove = `${lastMove.from}${lastMove.to}`;
     const isGameOver = chess.game_over();
 
     const playMoveResponse = await fetch(
       `https://lichess.org/api/board/game/${gameId}/move/${uciMove}`,
-      { method: 'post', headers: buildAuthHeader(playingAs) },
+      { method: 'post', headers: util.buildAuthHeader(playingAs) },
     );
 
-    const gameUrlText = (ongoingGameExists && boardResult.rows[0]?.move_count % 10 === 0)
-      ? `\n>View ongoing game at https://lichess.org/${gameId}`
-      : '';
+    const gameUrlText =
+      !isGameOver && (!ongoingGameExists || currentMoveCount % 10 === 0)
+        ? `\n>View ongoing game at https://lichess.org/${gameId}`
+        : '';
 
     if (playMoveResponse.ok) {
       message = `*${suggestedMove}* was successfully played`;
@@ -201,26 +201,42 @@ processMove = async (jobData) => {
         }
 
         dbClient.query({
-          text: `INSERT INTO boards(game_id, fen, current_team, result) VALUES($1, $2, $3, $4) ON CONFLICT (game_id) DO UPDATE SET fen = EXCLUDED.fen, current_team = EXCLUDED.current_team, result = EXCLUDED.result`,
-          values: [gameId, nextBoardFen, getOtherPlayer(playingAs), result],
+          text: `INSERT INTO boards(game_id, fen, current_team, move_count, result) VALUES($1, $2, $3, $4, $5) ON CONFLICT (game_id) DO UPDATE SET fen = EXCLUDED.fen, current_team = EXCLUDED.current_team, move_count = EXCLUDED.move_count, result = EXCLUDED.result`,
+          values: [
+            gameId,
+            nextBoardFen,
+            util.getOtherPlayer(playingAs),
+            currentMoveCount + 1,
+            result,
+          ],
         });
       } else {
         dbClient.query({
-          text: `INSERT INTO boards(game_id, fen, current_team) VALUES($1, $2, $3) ON CONFLICT (game_id) DO UPDATE SET fen = EXCLUDED.fen, current_team = EXCLUDED.current_team`,
-          values: [gameId, nextBoardFen, getOtherPlayer(playingAs)],
+          text: `INSERT INTO boards(game_id, fen, current_team, move_count) VALUES($1, $2, $3, $4) ON CONFLICT (game_id) DO UPDATE SET fen = EXCLUDED.fen, current_team = EXCLUDED.current_team, move_count = EXCLUDED.move_count`,
+          values: [
+            gameId,
+            nextBoardFen,
+            util.getOtherPlayer(playingAs),
+            currentMoveCount + 1,
+          ],
         });
       }
 
-      const timeSinceLastUpdate = ongoingGameExists ?
-        new Date().getTime() - Date.parse(boardResult.rows[0]?.last_updated) : 1500;
+      const timeSinceLastUpdate = ongoingGameExists
+        ? new Date().getTime() - Date.parse(boardResult.rows[0]?.last_updated)
+        : 1500;
 
-      if (timeSinceLastUpdate > 1499) {
+      if (timeSinceLastUpdate > 1499 || isGameOver) {
+        const gameOverMessage = isGameOver
+          ? '\n🏁 The current game is now over! Use /play to start a new one!'
+          : '';
+
         slackClient.chat.postMessage({
           channel: process.env.CHANNEL_ID,
           text: `${util.getChessEmoji(
             lastMove.color,
             lastMove.piece,
-          )} ${user_name} played *${suggestedMove}*${gameUrlText}`,
+          )} ${user_name} played *${suggestedMove}*${gameUrlText}${gameOverMessage}`,
         });
       }
 
@@ -253,19 +269,6 @@ processMove = async (jobData) => {
   }
 };
 
-getRandomPlayer = () => (Math.random() < 0.5 ? CARRIE : LARRY);
-
-getOtherPlayer = (playingAs) => (playingAs === CARRIE ? LARRY : CARRIE);
-
-getLastMove = (chess) => {
-  const history = chess.history({ verbose: true });
-  return history[history.length - 1];
-};
-
-buildAuthHeader = (playingAs) => ({
-  Authorization: 'Bearer ' + getLichessToken(playingAs),
-});
-
 getGameMetadata = async (dbClient, playingAs) => {
   const lastGameResult = await dbClient.query(
     'SELECT * FROM boards ORDER BY created_at DESC LIMIT 1',
@@ -280,7 +283,7 @@ getGameMetadata = async (dbClient, playingAs) => {
     ongoingGameExists = true;
     isPlayerTurn = row?.current_team === playingAs;
   } else {
-    const createNewGameJson = await createNewGame(getLichessToken(playingAs));
+    const createNewGameJson = await createNewGame(playingAs);
     gameId = createNewGameJson.game.id;
     ongoingGameExists = false;
     isPlayerTurn = true;
@@ -289,7 +292,7 @@ getGameMetadata = async (dbClient, playingAs) => {
   /*
   const currentlyPlayingResponse = await fetch(
     'https://lichess.org/api/account/playing',
-    { headers: buildAuthHeader(playingAs) },
+    { headers: util.buildAuthHeader(playingAs) },
   );
   const currentlyPlayingJson = await currentlyPlayingResponse.json();
 
@@ -303,7 +306,7 @@ getGameMetadata = async (dbClient, playingAs) => {
     gameId = currentGame.gameId;
     console.log('Current game ID: ' + gameId);
   } else {
-    const createNewGameJson = await createNewGame(getLichessToken(playingAs));
+    const createNewGameJson = await createNewGame(playingAs);
     gameId = createNewGameJson.game.id;
     console.log('Created new game with ID ' + gameId);
   }
@@ -312,25 +315,25 @@ getGameMetadata = async (dbClient, playingAs) => {
   return [gameId, ongoingGameExists, isPlayerTurn];
 };
 
-createNewGame = async (token) => {
-  const headers = {
-    Authorization: 'Bearer ' + token,
-  };
+createNewGame = async (playingAs) => {
+  const headers = util.buildAuthHeader(playingAs);
 
   const params = new URLSearchParams();
   params.append('color', 'white');
   params.append('rated', false);
-  params.append('clock.limit', 600);
-  params.append('clock.increment', 0);
+  params.append('clock.limit', constants.CLOCK_LIMIT);
+  params.append('clock.increment', constants.CLOCK_INCREMENT);
   params.append(
     'acceptByToken',
-    token === process.env.LARRY_LICHESS_TOKEN
+    playingAs === constants.PLAYER_2
       ? process.env.CARRIE_LICHESS_TOKEN
       : process.env.LARRY_LICHESS_TOKEN,
   );
 
   const opponent =
-    token === process.env.LARRY_LICHESS_TOKEN ? 'Carrie_CRC' : 'Larry_LDM';
+    playingAs === constants.PLAYER_2
+      ? constants.PLAYER_1_NAME
+      : constants.PLAYER_2_NAME;
 
   try {
     const response = await fetch(
@@ -350,18 +353,13 @@ createNewGame = async (token) => {
   return {};
 };
 
-getLichessToken = (playingAs = '') =>
-  playingAs.toLowerCase() === LARRY
-    ? process.env.LARRY_LICHESS_TOKEN
-    : process.env.CARRIE_LICHESS_TOKEN;
-
 getBoardUrl = async (req, res) => {
   try {
-    const randomPlayer = getRandomPlayer();
+    const randomPlayer = util.getRandomPlayer();
 
     const currentlyPlayingResponse = await fetch(
       'https://lichess.org/api/account/playing',
-      { headers: buildAuthHeader(randomPlayer) },
+      { headers: util.buildAuthHeader(randomPlayer) },
     );
 
     const currentlyPlayingJson = await currentlyPlayingResponse.json();
@@ -391,16 +389,26 @@ getMatchHistory = async (req, res) => {
     });
 
     const games = userGamesResult.rows || [];
-    const wins = games.reduce((wins, game) => {
-      if (game.result && game.team.toUpperCase().startsWith(game.result)) {
-        return wins + 1;
+
+    let wins = 0;
+    let losses = 0;
+    let draws = 0;
+    for (let i = 0; i < wins.length; i++) {
+      if (game.result === 'D') {
+        draws++;
+      } else if (
+        game.result &&
+        game.team.toUpperCase().startsWith(game.result)
+      ) {
+        wins++;
+      } else {
+        losses++;
       }
-      return wins;
-    }, 0);
+    }
 
-    // TODO calculate results of games with unpopulated results by using ChessJs
-
-    res.send(`🏆 You've won ${wins} out of ${games.length} games`);
+    res.send(
+      `🏆 Your record (W-L-D) is ${wins}-${losses}-${draws} in a total of ${games.length} games`,
+    );
     dbClient.release();
   } catch (error) {
     console.error(error);
