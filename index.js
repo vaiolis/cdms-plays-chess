@@ -148,8 +148,23 @@ processMove = async (jobData) => {
       values: [gameId],
     });
 
-    const currentBoardFen = boardResult.rows[0]?.fen;
-    const currentMoveCount = boardResult.rows[0]?.move_count || 0;
+    const boardRow = boardResult.rows[0] || {};
+    const currentBoardFen = boardRow.fen;
+    const currentMoveCount = boardRow.move_count || 0;
+    const currentPlayer = boardRow.current_team;
+
+    if (currentPlayer && playingAs !== currentPlayer) {
+      console.log(
+        `❌ Too Late: ${suggestedMove} was to be played for ${playingAs} but it is ${currentPlayer}'s turn`,
+      );
+      message = `❌ Too Late: it is now the other player's turn!`;
+      dbClient.release();
+      return {
+        result: 'error',
+        message,
+      };
+    }
+
     if (ongoingGameExists && currentBoardFen) {
       chess = new Chess(currentBoardFen);
     } else {
