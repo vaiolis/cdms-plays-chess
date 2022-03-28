@@ -359,8 +359,9 @@ createNewGame = async (playingAs) => {
   const params = new URLSearchParams();
   params.append('color', 'white');
   params.append('rated', false);
-  params.append('clock.limit', constants.CLOCK_LIMIT);
-  params.append('clock.increment', constants.CLOCK_INCREMENT);
+  // Remove time controls to make this a correspondence game
+  // params.append('clock.limit', constants.CLOCK_LIMIT);
+  // params.append('clock.increment', constants.CLOCK_INCREMENT);
   params.append(
     'acceptByToken',
     playingAs === constants.PLAYER_2
