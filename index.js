@@ -432,7 +432,8 @@ getMatchHistory = async (req, res) => {
     let wins = 0;
     let losses = 0;
     let draws = 0;
-    for (let i = 0; i < wins.length; i++) {
+    for (let i = 0; i < games.length; i++) {
+      const game = games[i];
       if (game.result === 'D') {
         draws++;
       } else if (
