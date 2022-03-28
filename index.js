@@ -71,10 +71,27 @@ playMove = async (req, res, playingAsArg) => {
 
   try {
     dbClient = await pool.connect();
-    const [gameId, ongoingGameExists, isPlayerTurn] = await getGameMetadata(
-      dbClient,
-      playingAs,
-    );
+
+    let gameId;
+    let ongoingGameExists;
+    let isPlayerTurn;
+    try {
+      const gameMetadata = await getGameMetadata(
+        dbClient,
+        playingAs,
+        res,
+        text,
+      );
+
+      gameId = gameMetadata[0];
+      ongoingGameExists = gameMetadata[1];
+      isPlayerTurn = gameMetadata[2];
+    } catch (error) {
+      console.error(`🚫 Invalid Move: ${text} was determined to be invalid before creating new lichess game.`);
+      res.send(error);
+      dbClient.release();
+      return;
+    }
 
     const userMovesResult = await dbClient.query({
       text: `SELECT * FROM moves WHERE username = $1 AND game_id = $2 ORDER BY move_id DESC LIMIT 1`,
@@ -284,7 +301,7 @@ processMove = async (jobData) => {
   }
 };
 
-getGameMetadata = async (dbClient, playingAs) => {
+getGameMetadata = async (dbClient, playingAs, res, suggestedMove) => {
   const lastGameResult = await dbClient.query(
     'SELECT * FROM boards ORDER BY created_at DESC LIMIT 1',
   );
@@ -298,6 +315,12 @@ getGameMetadata = async (dbClient, playingAs) => {
     ongoingGameExists = true;
     isPlayerTurn = row?.current_team === playingAs;
   } else {
+    chess = new Chess();
+    const moveResult = chess.move(suggestedMove);
+    if (moveResult == null) {
+      throw new Error(`🚫 Invalid move: *${suggestedMove}* was not played`);
+    }
+
     const createNewGameJson = await createNewGame(playingAs);
     gameId = createNewGameJson.game.id;
     ongoingGameExists = false;
