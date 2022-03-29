@@ -29,7 +29,7 @@ const getChessEmoji = (color, piece) => {
       case 'b':
         return '♝';
       default:
-        return '♟️';
+        return '♟';
     }
   }
 };
