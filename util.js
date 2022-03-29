@@ -54,6 +54,13 @@ const buildAuthHeader = (playingAs) => ({
   Authorization: 'Bearer ' + getLichessToken(playingAs),
 });
 
+const getRandomInt = (max) => Math.floor(Math.random() * max);
+
+const getRandomMove = (chess) => {
+  const candidateMoves = chess.moves();
+  return candidateMoves[getRandomInt(candidateMoves.length)];
+};
+
 module.exports = {
   getChessEmoji,
   getRandomPlayer,
@@ -61,4 +68,6 @@ module.exports = {
   getLastMove,
   buildAuthHeader,
   getLichessToken,
+  getRandomInt,
+  getRandomMove,
 };

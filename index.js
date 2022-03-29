@@ -59,9 +59,15 @@ app
   .post('/matchHistory', (req, res) => {
     signVerification(req, res, () => getMatchHistory(req, res));
   })
+  .post('/random', (req, res) => {
+    signVerification(req, res, () => playMove({ ...req, text: 'random' }, res));
+  })
   .post('/playNoSlack', (req, res) => playMove(req, res))
   .post('/boardNoSlack', (req, res) => getBoardUrl(req, res))
   .post('/matchHistoryNoSlack', (req, res) => getMatchHistory(req, res))
+  .post('/randomNoSlack', (req, res) =>
+    playMove({ ...req, text: 'random' }, res),
+  )
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, playingAsArg) => {
@@ -75,19 +81,18 @@ playMove = async (req, res, playingAsArg) => {
     let gameId;
     let ongoingGameExists;
     let isPlayerTurn;
+    let suggestedMove;
     try {
-      const gameMetadata = await getGameMetadata(
-        dbClient,
-        playingAs,
-        res,
-        text,
-      );
+      const gameMetadata = await getGameMetadata(dbClient, playingAs, text);
 
       gameId = gameMetadata[0];
       ongoingGameExists = gameMetadata[1];
       isPlayerTurn = gameMetadata[2];
+      suggestedMove = gameMetadata[3];
     } catch (error) {
-      console.error(`🚫 Invalid Move: ${text} was determined to be invalid before creating new lichess game.`);
+      console.error(
+        `🚫 Invalid Move: ${text} was determined to be invalid before creating new lichess game.`,
+      );
       res.send(error);
       dbClient.release();
       return;
@@ -105,6 +110,7 @@ playMove = async (req, res, playingAsArg) => {
         new Date().getTime() - Date.parse(currentMoveRow.created_at);
 
       if (timeSinceLastMove < process.env.MOVE_TIMEOUT) {
+        console.log(`🕒 ${user_name} must wait before making another move`);
         res.send(
           `🕒 Please wait ${
             process.env.MOVE_TIMEOUT / 1000
@@ -137,7 +143,7 @@ playMove = async (req, res, playingAsArg) => {
       ongoingGameExists,
       playingAs,
       user_name,
-      suggestedMove: text,
+      suggestedMove,
     };
 
     const moveValidationJob = moveValidationQueue.createJob(jobData);
@@ -188,12 +194,21 @@ processMove = async (jobData) => {
       chess = new Chess();
     }
 
-    const moveResult = chess.move(suggestedMove);
+    let moveResult;
+    let committedMove;
+    if (suggestedMove === constants.RANDOM) {
+      committedMove = util.getRandomMove(chess);
+      moveResult = chess.move(committedMove);
+    } else {
+      committedMove = suggestedMove;
+      moveResult = chess.move(suggestedMove);
+    }
+
     if (moveResult == null) {
       console.error(
-        `🚫 Invalid Move: ${suggestedMove} was determined invalid by ChessJS and not played.`,
+        `🚫 Invalid Move: ${committedMove} was determined invalid by ChessJS and not played.`,
       );
-      message = `🚫 Invalid move: *${suggestedMove}* was not played`;
+      message = `🚫 Invalid move: *${committedMove}* was not played`;
       dbClient.release();
       return {
         result: 'error',
@@ -203,7 +218,7 @@ processMove = async (jobData) => {
 
     const nextBoardFen = chess.fen();
     const lastMove = util.getLastMove(chess);
-    const uciMove = `${lastMove.from}${lastMove.to}`;
+    const uciMove = `${lastMove.from}${lastMove.to}${lastMove.promotion}`;
     const isGameOver = chess.game_over();
 
     const playMoveResponse = await fetch(
@@ -217,11 +232,11 @@ processMove = async (jobData) => {
         : '';
 
     if (playMoveResponse.ok) {
-      message = `*${suggestedMove}* was successfully played`;
+      message = `*${committedMove}* was successfully played`;
 
       dbClient.query({
         text: `INSERT INTO moves(username, move, team, game_id) VALUES($1, $2, $3, $4)`,
-        values: [user_name, suggestedMove, playingAs, gameId],
+        values: [user_name, committedMove, playingAs, gameId],
       });
 
       if (isGameOver) {
@@ -259,7 +274,9 @@ processMove = async (jobData) => {
         : 1500;
 
       if (timeSinceLastUpdate > 1499 || isGameOver) {
-        const newGameMessage = !ongoingGameExists ? '🆕 A new game has begun!\n' : '';
+        const newGameMessage = !ongoingGameExists
+          ? '🆕 A new game has begun!\n'
+          : '';
 
         const gameOverMessage = isGameOver
           ? '\n🏁 The current game is now over! Use /play to start a new one!'
@@ -270,12 +287,12 @@ processMove = async (jobData) => {
           text: `${newGameMessage}${util.getChessEmoji(
             lastMove.color,
             lastMove.piece,
-          )} ${user_name} played *${suggestedMove}*${gameUrlText}${gameOverMessage}`,
+          )} ${user_name} played *${committedMove}*${gameUrlText}${gameOverMessage}`,
         });
       }
 
       console.log(
-        `✅ Valid Move: ${suggestedMove} was played by ${user_name} for board ${gameId}`,
+        `✅ Valid Move: ${committedMove} was played by ${user_name} for board ${gameId}`,
       );
       dbClient.release();
       return {
@@ -284,9 +301,9 @@ processMove = async (jobData) => {
       };
     } else {
       console.error(
-        `🚫 Attempted Move: ${suggestedMove} was attempted with Lichess and was rejected`,
+        `🚫 Attempted Move: ${committedMove} was attempted with Lichess and was rejected`,
       );
-      message = `🚫 Invalid move: *${suggestedMove}* was not played`;
+      message = `🚫 Invalid move: *${committedMove}* was not played`;
       dbClient.release();
       return {
         result: 'error',
@@ -303,7 +320,7 @@ processMove = async (jobData) => {
   }
 };
 
-getGameMetadata = async (dbClient, playingAs, res, suggestedMove) => {
+getGameMetadata = async (dbClient, playingAs, suggestedMove) => {
   const lastGameResult = await dbClient.query(
     'SELECT * FROM boards ORDER BY created_at DESC LIMIT 1',
   );
@@ -318,7 +335,13 @@ getGameMetadata = async (dbClient, playingAs, res, suggestedMove) => {
     isPlayerTurn = row?.current_team === playingAs;
   } else {
     chess = new Chess();
-    const moveResult = chess.move(suggestedMove);
+    let moveResult;
+    if (suggestedMove === constants.RANDOM) {
+      moveResult = chess.move(util.getRandomMove(chess));
+    } else {
+      moveResult = chess.move(suggestedMove);
+    }
+
     if (moveResult == null) {
       throw new Error(`🚫 Invalid move: *${suggestedMove}* was not played`);
     }
@@ -352,7 +375,7 @@ getGameMetadata = async (dbClient, playingAs, res, suggestedMove) => {
   }
   */
 
-  return [gameId, ongoingGameExists, isPlayerTurn];
+  return [gameId, ongoingGameExists, isPlayerTurn, suggestedMove];
 };
 
 createNewGame = async (playingAs) => {

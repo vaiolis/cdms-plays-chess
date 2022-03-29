@@ -6,4 +6,5 @@ module.exports = {
   DEFAULT_PORT: 5000,
   CLOCK_LIMIT: 600,
   CLOCK_INCREMENT: 0,
+  RANDOM: 'random',
 };
