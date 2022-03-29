@@ -56,18 +56,22 @@ app
   .post('/board', (req, res) => {
     signVerification(req, res, () => getBoardUrl(req, res));
   })
-  .post('/matchHistory', (req, res) => {
-    signVerification(req, res, () => getMatchHistory(req, res));
+  .post('/chessProfile', (req, res) => {
+    signVerification(req, res, () => getChessProfile(req, res));
   })
   .post('/random', (req, res) => {
     signVerification(req, res, () => playMove({ ...req, text: 'random' }, res));
   })
+  .post('/chessHelp', (req, res) => {
+    signVerification(req, res, () => getChessHelp(req, res));
+  })
   .post('/playNoSlack', (req, res) => playMove(req, res))
   .post('/boardNoSlack', (req, res) => getBoardUrl(req, res))
-  .post('/matchHistoryNoSlack', (req, res) => getMatchHistory(req, res))
+  .post('/chessProfileNoSlack', (req, res) => getChessProfile(req, res))
   .post('/randomNoSlack', (req, res) =>
     playMove({ ...req, text: 'random' }, res),
   )
+  .post('/chessHelpNoSlack', (req, res) => getChessHelp(req, res))
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, playingAsArg) => {
@@ -443,7 +447,7 @@ getBoardUrl = async (req, res) => {
   }
 };
 
-getMatchHistory = async (req, res) => {
+getChessProfile = async (req, res) => {
   const { user_name } = req.body;
   try {
     const dbClient = await pool.connect();
@@ -471,11 +475,43 @@ getMatchHistory = async (req, res) => {
       }
     }
 
+    const usernameMessage = `👤 *User:* ${user_name}\n`;
+    let currentTeamMessage =
+      '👥 *Team:* you are not currently part of a team! use `/play` to submit a move for either side!\n';
+
+    const lastGameResult = await dbClient.query(
+      'SELECT * FROM boards ORDER BY created_at DESC LIMIT 1',
+    );
+    const row = lastGameResult.rows[0];
+    if (row && !row?.result) {
+      const gameId = row?.game_id;
+      const userMovesResult = await dbClient.query({
+        text: `SELECT * FROM moves WHERE username = $1 AND game_id = $2 ORDER BY move_id DESC LIMIT 1`,
+        values: [user_name, gameId],
+      });
+      const currentMoveRow = userMovesResult.rows[0];
+      if (currentMoveRow) {
+        currentTeamMessage = `👥 *Team:* ${currentMoveRow.team}\n`;
+      }
+    }
+
     res.send(
-      `🏆 Your record (W-L-D) is ${wins}-${losses}-${draws} in a total of ${games.length} games`,
+      usernameMessage +
+        currentTeamMessage +
+        `🏆 Your record (W-L-D) is ${wins}-${losses}-${draws} in a total of ${games.length} games`,
     );
     dbClient.release();
   } catch (error) {
     console.error(error);
   }
+};
+
+getChessHelp = (req, res) => {
+  res.send(
+    '*Veeva-plays-chess* is a slack app that lets Veevans collectively play a game of chaotic anarchy chess!\n' +
+      '• Every *5* seconds, you can submit a move with the `/play` command. You can either submit a move in ' +
+      'Standard Algebraic Notation (e.g. `/play Nf3`) or suggest a random legal move by entering `/play random`.\n' +
+      '• Use the command `/chessProfile` to see your current team and win/loss/draw record.\n\n' +
+      "*GLHF* and let's play some wild chess!",
+  );
 };
