@@ -398,10 +398,7 @@ createNewGame = async (playingAs) => {
       : process.env.LARRY_LICHESS_TOKEN,
   );
 
-  const opponent =
-    playingAs === constants.PLAYER_2
-      ? constants.PLAYER_1_NAME
-      : constants.PLAYER_2_NAME;
+  const opponent = util.getPlayerName(util.getOtherPlayer(playingAs));
 
   try {
     const response = await fetch(
@@ -491,7 +488,7 @@ getChessProfile = async (req, res) => {
       });
       const currentMoveRow = userMovesResult.rows[0];
       if (currentMoveRow) {
-        currentTeamMessage = `👥 *Team:* ${currentMoveRow.team}\n`;
+        currentTeamMessage = `👥 *Team:* ${util.getPlayerName(currentMoveRow.team)}\n`;
       }
     }
 

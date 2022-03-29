@@ -61,6 +61,11 @@ const getRandomMove = (chess) => {
   return candidateMoves[getRandomInt(candidateMoves.length)];
 };
 
+const getPlayerName = (playingAs) =>
+  playingAs === constants.PLAYER_1
+    ? constants.PLAYER_1_NAME
+    : constants.PLAYER_2_NAME;
+
 module.exports = {
   getChessEmoji,
   getRandomPlayer,
@@ -70,4 +75,5 @@ module.exports = {
   getLichessToken,
   getRandomInt,
   getRandomMove,
+  getPlayerName,
 };
