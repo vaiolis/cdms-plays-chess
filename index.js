@@ -419,7 +419,9 @@ createNewGame = async (playingAs) => {
 };
 
 getBoardUrl = async (req, res) => {
+  let dbClient;
   try {
+    /*
     const randomPlayer = util.getRandomPlayer();
 
     const currentlyPlayingResponse = await fetch(
@@ -430,17 +432,27 @@ getBoardUrl = async (req, res) => {
     const currentlyPlayingJson = await currentlyPlayingResponse.json();
 
     const ongoingGameExists = currentlyPlayingJson?.nowPlaying?.length;
+    */
+
+    dbClient = await pool.connect();
+    const lastGameResult = await dbClient.query(
+      'SELECT * FROM boards ORDER BY created_at DESC LIMIT 1',
+    );
+    const row = lastGameResult.rows[0];
+    const ongoingGameExists = row && !row?.result;
+    const gameId = row?.game_id;
 
     if (ongoingGameExists) {
-      const gameId = currentlyPlayingJson.nowPlaying[0].gameId;
       res.send(`🕓 Track the ongoing game at https://lichess.org/${gameId}`);
     } else {
       res.send(
         `👻 No ongoing game exists, use the '/play' command to start a new board!`,
       );
     }
+    dbClient?.release();
   } catch (error) {
     console.error(error);
+    dbClient?.release();
   }
 };
 
@@ -505,9 +517,10 @@ getChessProfile = async (req, res) => {
 
 getChessHelp = (req, res) => {
   res.send(
-    '*Veeva-plays-chess* is a slack app that lets Veevans collectively play a game of chaotic anarchy chess!\n' +
+    '*Vault Products Chess* is a slack app that lets Veevans collectively play a game of chaotic, anarchical chess!\n' +
       '• Every *5* seconds, you can submit a move with the `/play` command. You can either submit a move in ' +
       'Standard Algebraic Notation (e.g. `/play Nf3`) or suggest a random legal move by entering `/play random`.\n' +
+      '• To watch an ongoing game, enter `/board` to get a link to an online chess board provided by lichess.org.\n' +
       '• Use the command `/chessProfile` to see your current team and win/loss/draw record.\n\n' +
       "*GLHF* and let's play some wild chess!",
   );
