@@ -132,7 +132,7 @@ playMove = async (req, res, playingAsArg) => {
 
     const moveValidationJob = moveValidationQueue.createJob(jobData);
     moveValidationJob.timeout(3000).retries(1).save();
-    res.send(`✅ Move submitted!`);
+    res.send(`🕒 Move submitted, if it doesn't show up on the board check your syntax and try again`);
     dbClient.release();
   } catch (error) {
     console.error(error);
