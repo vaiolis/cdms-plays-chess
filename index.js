@@ -132,7 +132,9 @@ playMove = async (req, res, playingAsArg) => {
 
     const moveValidationJob = moveValidationQueue.createJob(jobData);
     moveValidationJob.timeout(3000).retries(1).save();
-    res.send(`🕒 Move submitted, if it doesn't show up on the board check your syntax and try again`);
+    res.send(
+      `🕒 Move submitted, if it doesn't show up on the board check your syntax and try again`,
+    );
     dbClient.release();
   } catch (error) {
     console.error(error);
@@ -463,6 +465,7 @@ getChessHelp = (req, res) => {
     '*Vault Products Chess* is a slack app that lets Veevans collectively play a game of chaotic, anarchical chess!\n' +
       '• Every *5* seconds, you can submit a move with the `/play` command. You can either submit a move in ' +
       'Standard Algebraic Notation (e.g. `/play Nf3`) or suggest a random legal move by entering `/play random`.\n' +
+      '• For more information on Standard Algebraic Notation, check out this chess.com article: https://www.chess.com/terms/chess-notation.\n' +
       '• To watch an ongoing game, enter `/board` to get a link to an online chess board provided by lichess.org.\n' +
       '• Use the command `/chessProfile` to see your current team and win/loss/draw record.\n\n' +
       "*GLHF* and let's play some wild chess!",
