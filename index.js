@@ -1,4 +1,3 @@
-// Require the Node Slack SDK package (github.com/slackapi/node-slack-sdk)
 const { WebClient, LogLevel } = require('@slack/web-api');
 const express = require('express');
 const path = require('path');
@@ -16,18 +15,13 @@ const moveValidationQueue = new Queue('validateMove', {
 });
 
 const PORT = process.env.PORT || constants.DEFAULT_PORT;
-const CARRIE = 'carrie';
-const LARRY = 'larry';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
-// WebClient instantiates a client that can call API methods
-// When using Bolt, you can use either `app.client` or the `client` passed to listeners.
 const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN, {
-  // LogLevel can be imported and used to make debugging simpler
   logLevel: LogLevel.DEBUG,
 });
 
@@ -44,12 +38,6 @@ app
   .set('views', path.join(__dirname, 'views'))
   .set('view engine', 'ejs')
   .get('/', (req, res) => res.render('pages/index'))
-  .post('/playLarry', (req, res) => {
-    signVerification(req, res, () => playMove(req, res, constants.PLAYER_2));
-  })
-  .post('/playCarrie', (req, res) => {
-    signVerification(req, res, () => playMove(req, res, constants.PLAYER_1));
-  })
   .post('/play', (req, res) => {
     signVerification(req, res, () => playMove(req, res));
   })
@@ -59,19 +47,9 @@ app
   .post('/chessProfile', (req, res) => {
     signVerification(req, res, () => getChessProfile(req, res));
   })
-  .post('/random', (req, res) => {
-    signVerification(req, res, () => playMove({ ...req, text: 'random' }, res));
-  })
   .post('/chessHelp', (req, res) => {
     signVerification(req, res, () => getChessHelp(req, res));
   })
-  .post('/playNoSlack', (req, res) => playMove(req, res))
-  .post('/boardNoSlack', (req, res) => getBoardUrl(req, res))
-  .post('/chessProfileNoSlack', (req, res) => getChessProfile(req, res))
-  .post('/randomNoSlack', (req, res) =>
-    playMove({ ...req, text: 'random' }, res),
-  )
-  .post('/chessHelpNoSlack', (req, res) => getChessHelp(req, res))
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, playingAsArg) => {

@@ -1,3 +1,4 @@
+// Copy-pasta'd from Rajat Srivastava's medium article: https://medium.com/@rajat_sriv/verifying-requests-from-slack-using-node-js-69a8b771b704
 const crypto = require('crypto');
 const qs = require('qs');
 // fetch this from environment variables
