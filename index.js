@@ -107,7 +107,9 @@ playMove = async (req, res, playingAsArg) => {
         (playingAs !== currentMoveRow.team && isPlayerTurn)
       ) {
         res.send(
-          `⛔ You are playing for ${util.getPlayerName(currentMoveRow.team)}, please wait until it is your turn to move`,
+          `⛔ You are playing for ${util.getPlayerName(
+            currentMoveRow.team,
+          )}, please wait until it is your turn to move`,
         );
         dbClient.release();
         return;
@@ -373,7 +375,6 @@ createNewGame = async (playingAs) => {
 getBoardUrl = async (req, res) => {
   let dbClient;
   try {
-
     dbClient = await pool.connect();
     const lastGameResult = await dbClient.query(
       'SELECT * FROM boards ORDER BY created_at DESC LIMIT 1',
@@ -440,7 +441,9 @@ getChessProfile = async (req, res) => {
       });
       const currentMoveRow = userMovesResult.rows[0];
       if (currentMoveRow) {
-        currentTeamMessage = `👥 *Team:* ${util.getPlayerName(currentMoveRow.team)}\n`;
+        currentTeamMessage = `👥 *Team:* ${util.getPlayerName(
+          currentMoveRow.team,
+        )}\n`;
       }
     }
 

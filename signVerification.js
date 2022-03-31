@@ -24,7 +24,7 @@ let signVerification = (req, res, next) => {
   if (
     crypto.timingSafeEqual(
       Buffer.from(mySignature, 'utf8'),
-      Buffer.from(slackSignature, 'utf8')
+      Buffer.from(slackSignature, 'utf8'),
     )
   ) {
     next();
