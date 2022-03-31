@@ -129,7 +129,7 @@ playMove = async (req, res, playingAsArg) => {
         (playingAs !== currentMoveRow.team && isPlayerTurn)
       ) {
         res.send(
-          `⛔ You are playing for ${currentMoveRow.team}, please wait until it is your turn to move`,
+          `⛔ You are playing for ${util.getPlayerName(currentMoveRow.team)}, please wait until it is your turn to move`,
         );
         dbClient.release();
         return;
@@ -356,29 +356,6 @@ getGameMetadata = async (dbClient, playingAs, suggestedMove) => {
     isPlayerTurn = true;
   }
 
-  /*
-  const currentlyPlayingResponse = await fetch(
-    'https://lichess.org/api/account/playing',
-    { headers: util.buildAuthHeader(playingAs) },
-  );
-  const currentlyPlayingJson = await currentlyPlayingResponse.json();
-
-  const ongoingGameExists = currentlyPlayingJson?.nowPlaying?.length;
-  const isPlayerTurn =
-    ongoingGameExists && currentlyPlayingJson.nowPlaying[0].isMyTurn;
-  let gameId;
-
-  if (ongoingGameExists) {
-    const currentGame = currentlyPlayingJson.nowPlaying[0];
-    gameId = currentGame.gameId;
-    console.log('Current game ID: ' + gameId);
-  } else {
-    const createNewGameJson = await createNewGame(playingAs);
-    gameId = createNewGameJson.game.id;
-    console.log('Created new game with ID ' + gameId);
-  }
-  */
-
   return [gameId, ongoingGameExists, isPlayerTurn, suggestedMove];
 };
 
@@ -388,9 +365,6 @@ createNewGame = async (playingAs) => {
   const params = new URLSearchParams();
   params.append('color', 'white');
   params.append('rated', false);
-  // Remove time controls to make this a correspondence game
-  // params.append('clock.limit', constants.CLOCK_LIMIT);
-  // params.append('clock.increment', constants.CLOCK_INCREMENT);
   params.append(
     'acceptByToken',
     playingAs === constants.PLAYER_2
@@ -421,18 +395,6 @@ createNewGame = async (playingAs) => {
 getBoardUrl = async (req, res) => {
   let dbClient;
   try {
-    /*
-    const randomPlayer = util.getRandomPlayer();
-
-    const currentlyPlayingResponse = await fetch(
-      'https://lichess.org/api/account/playing',
-      { headers: util.buildAuthHeader(randomPlayer) },
-    );
-
-    const currentlyPlayingJson = await currentlyPlayingResponse.json();
-
-    const ongoingGameExists = currentlyPlayingJson?.nowPlaying?.length;
-    */
 
     dbClient = await pool.connect();
     const lastGameResult = await dbClient.query(
