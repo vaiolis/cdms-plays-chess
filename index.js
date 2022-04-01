@@ -50,6 +50,7 @@ app
   .post('/chessHelp', (req, res) => {
     signVerification(req, res, () => getChessHelp(req, res));
   })
+  .post('/playNoSlack', (req, res) => playMove(req, res))
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, playingAsArg) => {
@@ -161,6 +162,31 @@ processMove = async (jobData) => {
     const currentBoardFen = boardRow.fen;
     const currentMoveCount = boardRow.move_count || 0;
     const currentPlayer = boardRow.current_team;
+
+    if (currentMoveCount >= process.env.DRAW_THRESHOLD) {
+      await fetch(`https://lichess.org/api/board/game/${gameId}/draw/yes`, {
+        method: 'post',
+        headers: util.buildAuthHeader(constants.PLAYER_1),
+      });
+
+      await fetch(`https://lichess.org/api/board/game/${gameId}/draw/yes`, {
+        method: 'post',
+        headers: util.buildAuthHeader(constants.PLAYER_2),
+      });
+
+      dbClient.query({
+        text: `INSERT INTO boards(game_id, result) VALUES($1, $2) ON CONFLICT (game_id) DO UPDATE SET result = EXCLUDED.result`,
+        values: [gameId, 'D'],
+      });
+
+      message = `🏁 The move threshold has been reached, and the game will end in a draw. Use /play to start a new game!`;
+      console.log(message);
+      dbClient.release();
+      return {
+        result: 'error',
+        message,
+      };
+    }
 
     if (currentPlayer && playingAs !== currentPlayer) {
       console.log(
