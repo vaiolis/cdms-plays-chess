@@ -50,7 +50,6 @@ app
   .post('/chessHelp', (req, res) => {
     signVerification(req, res, () => getChessHelp(req, res));
   })
-  .post('/playNoSlack', (req, res) => playMove(req, res))
   .listen(PORT, () => console.log(`Listening on ${PORT}`));
 
 playMove = async (req, res, playingAsArg) => {
